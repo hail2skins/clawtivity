@@ -1,0 +1,180 @@
+basePath: /
+definitions:
+  database.ActivityFeed:
+    properties:
+      category:
+        type: string
+      channel:
+        type: string
+      cost_estimate:
+        type: number
+      created_at:
+        type: string
+      duration_ms:
+        type: integer
+      external_ref:
+        type: string
+      id:
+        type: string
+      model:
+        type: string
+      project_tag:
+        type: string
+      reasoning:
+        type: boolean
+      session_key:
+        type: string
+      status:
+        type: string
+      thinking:
+        type: string
+      tokens_in:
+        type: integer
+      tokens_out:
+        type: integer
+      user_id:
+        type: string
+    type: object
+  database.ActivitySummary:
+    properties:
+      by_status:
+        additionalProperties:
+          type: integer
+        type: object
+      cost_total:
+        type: number
+      count:
+        type: integer
+      duration_ms_total:
+        type: integer
+      tokens_in_total:
+        type: integer
+      tokens_out_total:
+        type: integer
+    type: object
+  server.APIError:
+    properties:
+      error:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: Local-first activity and memory tracking API for OpenClaw.
+  title: Clawtivity API
+  version: "1.0"
+paths:
+  /api/activity:
+    get:
+      description: List activity entries with optional filters.
+      parameters:
+      - description: Filter by project_tag
+        in: query
+        name: project
+        type: string
+      - description: Filter by model
+        in: query
+        name: model
+        type: string
+      - description: Filter by created_at date (YYYY-MM-DD)
+        in: query
+        name: date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/database.ActivityFeed'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/server.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/server.APIError'
+      summary: List activities
+      tags:
+      - activities
+    post:
+      consumes:
+      - application/json
+      description: Create new activity entry from OpenClaw hook payload.
+      parameters:
+      - description: Activity data
+        in: body
+        name: activity
+        required: true
+        schema:
+          $ref: '#/definitions/database.ActivityFeed'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/database.ActivityFeed'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/server.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/server.APIError'
+      summary: Create activity
+      tags:
+      - activities
+  /api/activity/summary:
+    get:
+      description: Get aggregated activity stats with optional filters.
+      parameters:
+      - description: Filter by project_tag
+        in: query
+        name: project
+        type: string
+      - description: Filter by model
+        in: query
+        name: model
+        type: string
+      - description: Filter by created_at date (YYYY-MM-DD)
+        in: query
+        name: date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/database.ActivitySummary'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/server.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/server.APIError'
+      summary: Get activity summary
+      tags:
+      - activities
+  /health:
+    get:
+      description: Returns current service/database health details.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+swagger: "2.0"

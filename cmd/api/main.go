@@ -1,3 +1,7 @@
+// @title Clawtivity API
+// @version 1.0
+// @description Local-first activity and memory tracking API for OpenClaw.
+// @BasePath /
 package main
 
 import (

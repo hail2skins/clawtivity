@@ -30,3 +30,25 @@ func TestHelloWorldHandler(t *testing.T) {
 		t.Errorf("Handler returned unexpected body: got %v want %v", rr.Body.String(), expected)
 	}
 }
+
+func TestSwaggerRouteRegistered(t *testing.T) {
+	s := &Server{}
+	r := s.RegisterRoutes()
+
+	engine, ok := r.(*gin.Engine)
+	if !ok {
+		t.Fatalf("expected *gin.Engine, got %T", r)
+	}
+
+	found := false
+	for _, route := range engine.Routes() {
+		if route.Method == http.MethodGet && route.Path == "/swagger/*any" {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Fatal("expected swagger route GET /swagger/*any to be registered")
+	}
+}

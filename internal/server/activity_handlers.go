@@ -8,6 +8,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type APIError struct {
+	Error string `json:"error"`
+}
+
+// createActivityHandler godoc
+// @Summary Create activity
+// @Description Create new activity entry from OpenClaw hook payload.
+// @Tags activities
+// @Accept json
+// @Produce json
+// @Param activity body database.ActivityFeed true "Activity data"
+// @Success 201 {object} database.ActivityFeed
+// @Failure 400 {object} APIError
+// @Failure 500 {object} APIError
+// @Router /api/activity [post]
 func (s *Server) createActivityHandler(c *gin.Context) {
 	var input database.ActivityFeed
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -26,6 +41,18 @@ func (s *Server) createActivityHandler(c *gin.Context) {
 	c.JSON(http.StatusCreated, input)
 }
 
+// listActivitiesHandler godoc
+// @Summary List activities
+// @Description List activity entries with optional filters.
+// @Tags activities
+// @Produce json
+// @Param project query string false "Filter by project_tag"
+// @Param model query string false "Filter by model"
+// @Param date query string false "Filter by created_at date (YYYY-MM-DD)"
+// @Success 200 {array} database.ActivityFeed
+// @Failure 400 {object} APIError
+// @Failure 500 {object} APIError
+// @Router /api/activity [get]
 func (s *Server) listActivitiesHandler(c *gin.Context) {
 	filters := database.ActivityFilters{
 		ProjectTag: c.Query("project"),
@@ -46,6 +73,18 @@ func (s *Server) listActivitiesHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, activities)
 }
 
+// activitySummaryHandler godoc
+// @Summary Get activity summary
+// @Description Get aggregated activity stats with optional filters.
+// @Tags activities
+// @Produce json
+// @Param project query string false "Filter by project_tag"
+// @Param model query string false "Filter by model"
+// @Param date query string false "Filter by created_at date (YYYY-MM-DD)"
+// @Success 200 {object} database.ActivitySummary
+// @Failure 400 {object} APIError
+// @Failure 500 {object} APIError
+// @Router /api/activity/summary [get]
 func (s *Server) activitySummaryHandler(c *gin.Context) {
 	filters := database.ActivityFilters{
 		ProjectTag: c.Query("project"),

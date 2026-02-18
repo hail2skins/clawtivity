@@ -3,8 +3,11 @@ package server
 import (
 	"net/http"
 
+	_ "clawtivity/docs"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"clawtivity/cmd/web"
 	"github.com/a-h/templ"
@@ -27,6 +30,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.POST("/api/activity", s.createActivityHandler)
 	r.GET("/api/activity", s.listActivitiesHandler)
 	r.GET("/api/activity/summary", s.activitySummaryHandler)
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	staticFiles, _ := fs.Sub(web.Files, "assets")
 	r.StaticFS("/assets", http.FS(staticFiles))
@@ -49,6 +53,13 @@ func (s *Server) HelloWorldHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// healthHandler godoc
+// @Summary Health check
+// @Description Returns current service/database health details.
+// @Tags health
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Router /health [get]
 func (s *Server) healthHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, s.db.Health())
 }
