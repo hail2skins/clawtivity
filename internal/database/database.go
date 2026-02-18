@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+var ErrInvalidDateFilter = errors.New("invalid date filter: expected YYYY-MM-DD")
 
 // ActivityFeed is the local-first event ledger entry.
 type ActivityFeed struct {
@@ -76,8 +79,27 @@ type Service interface {
 	// Health returns a map of health status information.
 	Health() map[string]string
 
+	CreateActivity(ctx context.Context, activity *ActivityFeed) error
+	ListActivities(ctx context.Context, filters ActivityFilters) ([]ActivityFeed, error)
+	SummarizeActivities(ctx context.Context, filters ActivityFilters) (ActivitySummary, error)
+
 	// Close terminates the database connection.
 	Close() error
+}
+
+type ActivityFilters struct {
+	ProjectTag string
+	Model      string
+	Date       string
+}
+
+type ActivitySummary struct {
+	Count           int64          `json:"count"`
+	TokensInTotal   int64          `json:"tokens_in_total"`
+	TokensOutTotal  int64          `json:"tokens_out_total"`
+	CostTotal       float64        `json:"cost_total"`
+	DurationMSTotal int64          `json:"duration_ms_total"`
+	ByStatus        map[string]int `json:"by_status"`
 }
 
 type service struct {
@@ -176,10 +198,82 @@ func (s *service) Health() map[string]string {
 	return stats
 }
 
+func (s *service) CreateActivity(ctx context.Context, activity *ActivityFeed) error {
+	return s.db.WithContext(ctx).Create(activity).Error
+}
+
+func (s *service) ListActivities(ctx context.Context, filters ActivityFilters) ([]ActivityFeed, error) {
+	tx, err := applyActivityFilters(s.db.WithContext(ctx).Model(&ActivityFeed{}), filters)
+	if err != nil {
+		return nil, err
+	}
+
+	var activities []ActivityFeed
+	if err := tx.Order("created_at desc").Find(&activities).Error; err != nil {
+		return nil, err
+	}
+	return activities, nil
+}
+
+func (s *service) SummarizeActivities(ctx context.Context, filters ActivityFilters) (ActivitySummary, error) {
+	tx, err := applyActivityFilters(s.db.WithContext(ctx).Model(&ActivityFeed{}), filters)
+	if err != nil {
+		return ActivitySummary{}, err
+	}
+
+	var summary ActivitySummary
+	if err := tx.Select(
+		"COUNT(*) AS count, COALESCE(SUM(tokens_in), 0) AS tokens_in_total, COALESCE(SUM(tokens_out), 0) AS tokens_out_total, COALESCE(SUM(cost_estimate), 0) AS cost_total, COALESCE(SUM(duration_ms), 0) AS duration_ms_total",
+	).Scan(&summary).Error; err != nil {
+		return ActivitySummary{}, err
+	}
+
+	statusTx, err := applyActivityFilters(s.db.WithContext(ctx).Model(&ActivityFeed{}), filters)
+	if err != nil {
+		return ActivitySummary{}, err
+	}
+
+	var grouped []struct {
+		Status string
+		Count  int64
+	}
+	if err := statusTx.Select("status, COUNT(*) AS count").Group("status").Scan(&grouped).Error; err != nil {
+		return ActivitySummary{}, err
+	}
+
+	summary.ByStatus = make(map[string]int, len(grouped))
+	for _, row := range grouped {
+		if row.Status == "" {
+			continue
+		}
+		summary.ByStatus[row.Status] = int(row.Count)
+	}
+
+	return summary, nil
+}
+
 // Close closes the database connection.
 func (s *service) Close() error {
 	log.Printf("Disconnected from database: %s", dburl)
 	return s.sqlDB.Close()
+}
+
+func applyActivityFilters(tx *gorm.DB, filters ActivityFilters) (*gorm.DB, error) {
+	if filters.ProjectTag != "" {
+		tx = tx.Where("project_tag = ?", filters.ProjectTag)
+	}
+	if filters.Model != "" {
+		tx = tx.Where("model = ?", filters.Model)
+	}
+	if filters.Date != "" {
+		start, err := time.Parse("2006-01-02", filters.Date)
+		if err != nil {
+			return nil, ErrInvalidDateFilter
+		}
+		end := start.Add(24 * time.Hour)
+		tx = tx.Where("created_at >= ? AND created_at < ?", start, end)
+	}
+	return tx, nil
 }
 
 func generateUUIDv4() string {

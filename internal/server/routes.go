@@ -24,6 +24,9 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.GET("/", s.HelloWorldHandler)
 
 	r.GET("/health", s.healthHandler)
+	r.POST("/api/activity", s.createActivityHandler)
+	r.GET("/api/activity", s.listActivitiesHandler)
+	r.GET("/api/activity/summary", s.activitySummaryHandler)
 
 	staticFiles, _ := fs.Sub(web.Files, "assets")
 	r.StaticFS("/assets", http.FS(staticFiles))
