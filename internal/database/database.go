@@ -2,28 +2,32 @@ package database
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	_ "github.com/joho/godotenv/autoload"
-	_ "github.com/mattn/go-sqlite3"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // ValidActivityCategories defines allowed category values
 var ValidActivityCategories = []string{"general", "admin", "code", "research", "other"}
 
-// ValidActivityStatuses defines allowed status values  
+// ValidActivityStatuses defines allowed status values
 var ValidActivityStatuses = []string{"success", "failed", "in_progress", "pending"}
 
-// Activity represents an agent activity/work session tracked by Clawtivity
+// Activity represents an agent activity/work session tracked by Clawtivity.
+// Kept for backwards compatibility with existing tests and API assumptions.
 type Activity struct {
-	ID            int64     `json:"id"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID        int64     `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	// Core tracking fields
 	Category      string    `json:"category"`
@@ -34,30 +38,79 @@ type Activity struct {
 	ElapsedTime   int64     `json:"elapsed_time"` // in seconds
 
 	// Model info
-	Model         string    `json:"model"`
-	Reasoning     bool      `json:"reasoning"`
-	Thinking      string    `json:"thinking"` // low, medium, high
+	Model     string `json:"model"`
+	Reasoning bool   `json:"reasoning"`
+	Thinking  string `json:"thinking"` // low, medium, high
 
 	// Work description
-	Title         string    `json:"title"`
-	Project       string    `json:"project"`
+	Title   string `json:"title"`
+	Project string `json:"project"`
 
 	// Extended fields
-	SessionID     string    `json:"session_id"`
-	Channel       string    `json:"channel"`
-	Status        string    `json:"status"`
-	ErrorMessage  string    `json:"error_message"`
-	ToolsUsed     string    `json:"tools_used"` // JSON array as string
-	Cost          float64   `json:"cost"`
-	ParentSession string    `json:"parent_session"`
-	UserID        string    `json:"user_id"`
-	JiraTicket    string    `json:"jira_ticket"`
-	GitCommit     string    `json:"git_commit"`
-	Tags          string    `json:"tags"` // comma-separated
-	Metadata      string    `json:"metadata"` // JSON blob
+	SessionID     string  `json:"session_id"`
+	Channel       string  `json:"channel"`
+	Status        string  `json:"status"`
+	ErrorMessage  string  `json:"error_message"`
+	ToolsUsed     string  `json:"tools_used"` // JSON array as string
+	Cost          float64 `json:"cost"`
+	ParentSession string  `json:"parent_session"`
+	UserID        string  `json:"user_id"`
+	JiraTicket    string  `json:"jira_ticket"`
+	GitCommit     string  `json:"git_commit"`
+	Tags          string  `json:"tags"`     // comma-separated
+	Metadata      string  `json:"metadata"` // JSON blob
 }
 
-// isValidCategory checks if the given category is valid
+// ActivityFeed is the local-first event ledger entry.
+type ActivityFeed struct {
+	ID           string    `gorm:"type:char(36);primaryKey" json:"id"`
+	SessionKey   string    `gorm:"index:idx_activity_feed_session_key" json:"session_key"`
+	Model        string    `json:"model"`
+	TokensIn     int       `json:"tokens_in"`
+	TokensOut    int       `json:"tokens_out"`
+	CostEstimate float64   `json:"cost_estimate"`
+	DurationMS   int64     `json:"duration_ms"`
+	ProjectTag   string    `gorm:"index:idx_activity_feed_project_tag" json:"project_tag"`
+	ExternalRef  string    `json:"external_ref"`
+	CreatedAt    time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
+
+func (ActivityFeed) TableName() string {
+	return "activity_feed"
+}
+
+func (a *ActivityFeed) BeforeCreate(_ *gorm.DB) error {
+	if a.ID == "" {
+		a.ID = generateUUIDv4()
+	}
+	return nil
+}
+
+// TurnMemory stores compact summaries of a session turn.
+type TurnMemory struct {
+	ID             string    `gorm:"type:char(36);primaryKey" json:"id"`
+	SessionKey     string    `gorm:"index:idx_turn_memories_session_key" json:"session_key"`
+	Summary        string    `json:"summary"`
+	ToolsUsed      string    `gorm:"type:json" json:"tools_used"`
+	FilesTouched   string    `gorm:"type:json" json:"files_touched"`
+	KeyDecisions   string    `gorm:"type:json" json:"key_decisions"`
+	ContextSnippet string    `json:"context_snippet"`
+	Tags           string    `gorm:"type:json" json:"tags"`
+	CreatedAt      time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
+
+func (TurnMemory) TableName() string {
+	return "turn_memories"
+}
+
+func (m *TurnMemory) BeforeCreate(_ *gorm.DB) error {
+	if m.ID == "" {
+		m.ID = generateUUIDv4()
+	}
+	return nil
+}
+
+// isValidCategory checks if the given category is valid.
 func isValidCategory(category string) bool {
 	for _, c := range ValidActivityCategories {
 		if category == c {
@@ -67,7 +120,7 @@ func isValidCategory(category string) bool {
 	return false
 }
 
-// isValidStatus checks if the given status is valid
+// isValidStatus checks if the given status is valid.
 func isValidStatus(status string) bool {
 	for _, s := range ValidActivityStatuses {
 		if status == s {
@@ -80,65 +133,84 @@ func isValidStatus(status string) bool {
 // Service represents a service that interacts with a database.
 type Service interface {
 	// Health returns a map of health status information.
-	// The keys and values in the map are service-specific.
 	Health() map[string]string
 
 	// Close terminates the database connection.
-	// It returns an error if the connection cannot be closed.
 	Close() error
 }
 
 type service struct {
-	db *sql.DB
+	db    *gorm.DB
+	sqlDB *sql.DB
 }
 
 var (
 	dburl      = os.Getenv("BLUEPRINT_DB_URL")
 	dbInstance *service
+	dbMu       sync.Mutex
 )
 
 func New() Service {
-	// Reuse Connection
+	dbMu.Lock()
+	defer dbMu.Unlock()
+
 	if dbInstance != nil {
 		return dbInstance
 	}
 
-	db, err := sql.Open("sqlite3", dburl)
+	svc, err := newSQLiteService(dburl)
 	if err != nil {
-		// This will not be a connection error, but a DSN parse error or
-		// another initialization error.
 		log.Fatal(err)
 	}
 
-	dbInstance = &service{
-		db: db,
-	}
+	dbInstance = svc
 	return dbInstance
 }
 
+func NewSQLiteAdapter(dsn string) (Service, error) {
+	return newSQLiteService(dsn)
+}
+
+func newSQLiteService(dsn string) (*service, error) {
+	if dsn == "" {
+		dsn = "./test.db"
+	}
+
+	gormDB, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := gormDB.AutoMigrate(&ActivityFeed{}, &TurnMemory{}); err != nil {
+		return nil, err
+	}
+
+	sqlDB, err := gormDB.DB()
+	if err != nil {
+		return nil, err
+	}
+
+	return &service{db: gormDB, sqlDB: sqlDB}, nil
+}
+
 // Health checks the health of the database connection by pinging the database.
-// It returns a map with keys indicating various health statistics.
 func (s *service) Health() map[string]string {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
 	stats := make(map[string]string)
 
-	// Ping the database
-	err := s.db.PingContext(ctx)
+	err := s.sqlDB.PingContext(ctx)
 	if err != nil {
 		stats["status"] = "down"
 		stats["error"] = fmt.Sprintf("db down: %v", err)
-		log.Fatalf("db down: %v", err) // Log the error and terminate the program
 		return stats
 	}
 
-	// Database is up, add more statistics
 	stats["status"] = "up"
 	stats["message"] = "It's healthy"
 
-	// Get database stats (like open connections, in use, idle, etc.)
-	dbStats := s.db.Stats()
+	dbStats := s.sqlDB.Stats()
 	stats["open_connections"] = strconv.Itoa(dbStats.OpenConnections)
 	stats["in_use"] = strconv.Itoa(dbStats.InUse)
 	stats["idle"] = strconv.Itoa(dbStats.Idle)
@@ -147,19 +219,15 @@ func (s *service) Health() map[string]string {
 	stats["max_idle_closed"] = strconv.FormatInt(dbStats.MaxIdleClosed, 10)
 	stats["max_lifetime_closed"] = strconv.FormatInt(dbStats.MaxLifetimeClosed, 10)
 
-	// Evaluate stats to provide a health message
-	if dbStats.OpenConnections > 40 { // Assuming 50 is the max for this example
+	if dbStats.OpenConnections > 40 {
 		stats["message"] = "The database is experiencing heavy load."
 	}
-
 	if dbStats.WaitCount > 1000 {
 		stats["message"] = "The database has a high number of wait events, indicating potential bottlenecks."
 	}
-
 	if dbStats.MaxIdleClosed > int64(dbStats.OpenConnections)/2 {
 		stats["message"] = "Many idle connections are being closed, consider revising the connection pool settings."
 	}
-
 	if dbStats.MaxLifetimeClosed > int64(dbStats.OpenConnections)/2 {
 		stats["message"] = "Many connections are being closed due to max lifetime, consider increasing max lifetime or revising the connection usage pattern."
 	}
@@ -168,10 +236,25 @@ func (s *service) Health() map[string]string {
 }
 
 // Close closes the database connection.
-// It logs a message indicating the disconnection from the specific database.
-// If the connection is successfully closed, it returns nil.
-// If an error occurs while closing the connection, it returns the error.
 func (s *service) Close() error {
 	log.Printf("Disconnected from database: %s", dburl)
-	return s.db.Close()
+	return s.sqlDB.Close()
+}
+
+func generateUUIDv4() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4],
+		b[4:6],
+		b[6:8],
+		b[8:10],
+		b[10:16],
+	)
 }
