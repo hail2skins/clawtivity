@@ -78,7 +78,6 @@ function detectProjectTag(event: unknown): string {
 }
 
 function toPayload(event: unknown): AnyRecord {
-  const action = asString(get(event, "action"), "sent");
   const eventType = asString(get(event, "type"), "message");
 
   const tools = pickTools(
@@ -97,13 +96,11 @@ function toPayload(event: unknown): AnyRecord {
 
   const sentSuccess = get(event, "context.success");
   const status =
-    action === "received"
-      ? "pending"
-      : typeof sentSuccess === "boolean"
-        ? sentSuccess
-          ? "success"
-          : "failed"
-        : asString(get(event, "status", "result.status"), "success");
+    typeof sentSuccess === "boolean"
+      ? sentSuccess
+        ? "success"
+        : "failed"
+      : asString(get(event, "status", "result.status"), "success");
 
   return {
     session_key: asString(get(event, "session_key", "sessionKey", "context.sessionKey", "sessionKey"), "unknown-session"),
@@ -178,7 +175,7 @@ export default async function clawtivityMessageHook(event: unknown): Promise<voi
   if (eventType !== "message") {
     return;
   }
-  if (action !== "received" && action !== "sent") {
+  if (action !== "sent") {
     return;
   }
 

@@ -1,0 +1,17 @@
+{
+  "id": "clawtivity-activity",
+  "name": "Clawtivity Activity Plugin",
+  "description": "Reliable outbound claw activity logging via plugin hooks.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "skillPath": { "type": "string" },
+      "apiUrl": { "type": "string" },
+      "projectTag": { "type": "string" },
+      "userId": { "type": "string" },
+      "freshnessMs": { "type": "integer", "minimum": 1000, "maximum": 600000 }
+    }
+  }
+}

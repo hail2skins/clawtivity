@@ -95,7 +95,33 @@ mkdir -p ~/.openclaw/skills/clawtivity
 cp -R skills/clawtivity/. ~/.openclaw/skills/clawtivity/
 ```
 
-### Hook (CLAW-15)
+This skill script is the ingestion client used by both hook and plugin paths.
+It handles retry, fallback queueing, and replay.
+
+### Plugin (CLAW-16, primary/reliable)
+
+Repository source:
+- `plugins/clawtivity-activity/openclaw.plugin.json`
+- `plugins/clawtivity-activity/index.js`
+
+Install and enable:
+
+```bash
+openclaw plugins install ./plugins/clawtivity-activity
+openclaw plugins enable clawtivity-activity
+openclaw plugins list --json
+```
+
+Behavior:
+- listens to `llm_output`, `message_sent`, and `agent_end`
+- captures outbound assistant activity and failed turns
+- pipes normalized JSON into:
+
+```bash
+python3 ~/.openclaw/skills/clawtivity/scripts/log_activity.py
+```
+
+### Hook (CLAW-15, legacy/optional)
 
 Repository source:
 - `skills/clawtivity/hook/HOOK.md`
@@ -112,7 +138,7 @@ cp skills/clawtivity/hook/HOOK.md ~/.openclaw/hooks/clawtivity/HOOK.md
 cp skills/clawtivity/hook/handler.ts ~/.openclaw/hooks/clawtivity/handler.ts
 ```
 
-The hook is configured for `after_agent_turn` and pipes normalized turn JSON into:
+The hook is configured for `message:sent` and pipes normalized turn JSON into:
 
 ```bash
 echo "$JSON" | python3 ~/.openclaw/skills/clawtivity/scripts/log_activity.py
@@ -125,10 +151,14 @@ echo "$JSON" | python3 ~/.openclaw/skills/clawtivity/scripts/log_activity.py
 - Fallback queue on failure: `~/.clawtivity/queue/YYYY-MM-DD.md`
 - Queue replay on next successful POST
 
-### Verify Hook Wiring
+The retry/fallback behavior is implemented in `skills/clawtivity/scripts/log_activity.py`.
+
+### Verify Wiring
 
 ```bash
+openclaw plugins list --json
 openclaw hooks list --json
+openclaw plugins enable clawtivity-activity
 openclaw hooks enable clawtivity
 ```
 

@@ -1,24 +1,28 @@
 ---
 name: clawtivity
-description: "Send message event telemetry to local Clawtivity API"
+description: "Legacy outbound message telemetry bridge to local Clawtivity API"
 homepage: https://github.com/hail2skins/clawtivity
 metadata:
   {
     "openclaw":
       {
         "emoji": "📊",
-        "events": ["message:received", "message:sent"],
+        "events": ["message:sent"],
         "requires": { "bins": ["python3"] },
         "install": [{ "id": "local", "kind": "manual", "label": "Local hook install" }],
       },
   }
 ---
 
-# Clawtivity Hook (Message Events)
+# Clawtivity Hook (Legacy Message Bridge)
 
-Runs on message lifecycle events and forwards telemetry fields to the local Clawtivity skill script:
+This hook forwards outbound message telemetry to the local Clawtivity skill script:
 
 `echo "$JSON" | python3 ~/.openclaw/skills/clawtivity/scripts/log_activity.py`
+
+For reliable agent activity capture, use the shipped plugin at:
+
+- `plugins/clawtivity-activity/`
 
 ## Extracted fields
 
@@ -34,7 +38,6 @@ Runs on message lifecycle events and forwards telemetry fields to the local Claw
 - `status`
 
 Status behavior:
-- `message:received` -> `pending`
 - `message:sent` -> `success` when `context.success=true`, else `failed`
 
 ## Destination
