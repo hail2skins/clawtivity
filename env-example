@@ -1,0 +1,15 @@
+# Clawtivity Environment Variables
+# Copy this file to .env and fill in your values
+
+# Server
+PORT=8080
+APP_ENV=local
+
+# Database (SQLite)
+BLUEPRINT_DB_URL=./test.db
+
+# Future connectors (uncomment as needed)
+# POSTGRES_DB_URL=
+# MYSQL_DB_URL=
+# REDIS_URL=
+# OPENCLAW_API_KEY=

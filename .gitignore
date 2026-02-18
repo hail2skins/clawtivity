@@ -32,6 +32,10 @@ main
 # OS X generated file
 .DS_Store
 
+# Database
+*.db
+test.db
+
 
 # Tailwind CSS
 cmd/web/assets/css/output.css
