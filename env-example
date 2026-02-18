@@ -2,7 +2,7 @@
 # Copy this file to .env and fill in your values
 
 # Server
-PORT=8080
+PORT=18730
 APP_ENV=local
 
 # Database (SQLite)
