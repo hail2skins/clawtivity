@@ -94,11 +94,11 @@ type ActivityFilters struct {
 }
 
 type ActivitySummary struct {
-	Count           int64          `json:"count"`
-	TokensInTotal   int64          `json:"tokens_in_total"`
-	TokensOutTotal  int64          `json:"tokens_out_total"`
-	CostTotal       float64        `json:"cost_total"`
-	DurationMSTotal int64          `json:"duration_ms_total"`
+	Count           int64          `gorm:"column:count" json:"count"`
+	TokensInTotal   int64          `gorm:"column:tokens_in_total" json:"tokens_in_total"`
+	TokensOutTotal  int64          `gorm:"column:tokens_out_total" json:"tokens_out_total"`
+	CostTotal       float64        `gorm:"column:cost_total" json:"cost_total"`
+	DurationMSTotal int64          `gorm:"column:duration_ms_total" json:"duration_ms_total"`
 	ByStatus        map[string]int `json:"by_status"`
 }
 
@@ -223,11 +223,11 @@ func (s *service) SummarizeActivities(ctx context.Context, filters ActivityFilte
 
 	// Use a temp struct to avoid GORM trying to map to ByStatus map field
 	var result struct {
-		Count          int64   `json:"count"`
-		TokensInTotal  int64   `json:"tokens_in_total"`
-		TokensOutTotal int64   `json:"tokens_out_total"`
-		CostTotal      float64 `json:"cost_total"`
-		DurationTotal  int64   `json:"duration_ms_total"`
+		Count           int64   `gorm:"column:count" json:"count"`
+		TokensInTotal   int64   `gorm:"column:tokens_in_total" json:"tokens_in_total"`
+		TokensOutTotal  int64   `gorm:"column:tokens_out_total" json:"tokens_out_total"`
+		CostTotal       float64 `gorm:"column:cost_total" json:"cost_total"`
+		DurationMSTotal int64   `gorm:"column:duration_ms_total" json:"duration_ms_total"`
 	}
 	if err := tx.Select(
 		"COUNT(*) AS count, COALESCE(SUM(tokens_in), 0) AS tokens_in_total, COALESCE(SUM(tokens_out), 0) AS tokens_out_total, COALESCE(SUM(cost_estimate), 0) AS cost_total, COALESCE(SUM(duration_ms), 0) AS duration_ms_total",
@@ -236,11 +236,11 @@ func (s *service) SummarizeActivities(ctx context.Context, filters ActivityFilte
 	}
 
 	summary := ActivitySummary{
-		Count:            result.Count,
-		TokensInTotal:    result.TokensInTotal,
-		TokensOutTotal:   result.TokensOutTotal,
-		CostTotal:        result.CostTotal,
-		DurationMSTotal:  result.DurationTotal,
+		Count:           result.Count,
+		TokensInTotal:   result.TokensInTotal,
+		TokensOutTotal:  result.TokensOutTotal,
+		CostTotal:       result.CostTotal,
+		DurationMSTotal: result.DurationMSTotal,
 	}
 
 	statusTx, err := applyActivityFilters(s.db.WithContext(ctx).Model(&ActivityFeed{}), filters)

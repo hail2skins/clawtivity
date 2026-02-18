@@ -1,22 +1,22 @@
 ---
 name: clawtivity
-description: "Send after-turn activity telemetry to local Clawtivity API"
+description: "Send message event telemetry to local Clawtivity API"
 homepage: https://github.com/hail2skins/clawtivity
 metadata:
   {
     "openclaw":
       {
         "emoji": "📊",
-        "events": ["after_agent_turn"],
+        "events": ["message:received", "message:sent"],
         "requires": { "bins": ["python3"] },
         "install": [{ "id": "local", "kind": "manual", "label": "Local hook install" }],
       },
   }
 ---
 
-# Clawtivity Hook
+# Clawtivity Hook (Message Events)
 
-Runs after each agent turn and forwards selected telemetry fields to the local Clawtivity skill script:
+Runs on message lifecycle events and forwards telemetry fields to the local Clawtivity skill script:
 
 `echo "$JSON" | python3 ~/.openclaw/skills/clawtivity/scripts/log_activity.py`
 
@@ -31,6 +31,11 @@ Runs after each agent turn and forwards selected telemetry fields to the local C
 - `user_id`
 - `tools_used`
 - `project_tag`
+- `status`
+
+Status behavior:
+- `message:received` -> `pending`
+- `message:sent` -> `success` when `context.success=true`, else `failed`
 
 ## Destination
 

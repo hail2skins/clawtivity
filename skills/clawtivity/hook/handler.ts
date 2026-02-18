@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import os from "node:os";
 import path from "node:path";
 
 type AnyRecord = Record<string, unknown>;
@@ -79,6 +78,9 @@ function detectProjectTag(event: unknown): string {
 }
 
 function toPayload(event: unknown): AnyRecord {
+  const action = asString(get(event, "action"), "sent");
+  const eventType = asString(get(event, "type"), "message");
+
   const tools = pickTools(
     get(
       event,
@@ -88,12 +90,24 @@ function toPayload(event: unknown): AnyRecord {
       "turn.tools",
       "result.tools",
       "metrics.tools",
+      "context.tools",
+      "context.tools_used",
     ),
   );
 
+  const sentSuccess = get(event, "context.success");
+  const status =
+    action === "received"
+      ? "pending"
+      : typeof sentSuccess === "boolean"
+        ? sentSuccess
+          ? "success"
+          : "failed"
+        : asString(get(event, "status", "result.status"), "success");
+
   return {
-    session_key: asString(get(event, "session_key", "sessionKey", "context.sessionKey"), "unknown-session"),
-    model: asString(get(event, "model", "result.model", "context.model"), "unknown-model"),
+    session_key: asString(get(event, "session_key", "sessionKey", "context.sessionKey", "sessionKey"), "unknown-session"),
+    model: asString(get(event, "model", "result.model", "context.model", "context.metadata.model"), "unknown-model"),
     tokens_in: asInt(
       get(
         event,
@@ -118,12 +132,16 @@ function toPayload(event: unknown): AnyRecord {
       ),
       0,
     ),
-    duration_ms: asInt(get(event, "duration_ms", "durationMs", "metrics.duration_ms"), 0),
-    channel: asString(get(event, "channel", "context.channel", "context.commandSource"), "webchat"),
-    user_id: asString(get(event, "user_id", "userId", "context.senderId", "senderId"), "unknown-user"),
+    duration_ms: asInt(get(event, "duration_ms", "durationMs", "metrics.duration_ms", "context.duration_ms"), 0),
+    channel: asString(get(event, "channel", "context.channel", "context.commandSource", "context.channelId"), "webchat"),
+    user_id: asString(
+      get(event, "user_id", "userId", "context.senderId", "senderId", "context.from", "context.to"),
+      "unknown-user",
+    ),
     tools_used: tools,
     project_tag: asString(get(event, "project_tag", "projectTag"), detectProjectTag(event)),
-    status: asString(get(event, "status", "result.status"), "success"),
+    status,
+    category: eventType === "message" ? "general" : "other",
   };
 }
 
@@ -154,7 +172,16 @@ function sendToSkill(payload: AnyRecord): Promise<void> {
   });
 }
 
-export default async function clawtivityAfterAgentTurn(event: unknown): Promise<void> {
+export default async function clawtivityMessageHook(event: unknown): Promise<void> {
+  const eventType = asString(get(event, "type"));
+  const action = asString(get(event, "action"));
+  if (eventType !== "message") {
+    return;
+  }
+  if (action !== "received" && action !== "sent") {
+    return;
+  }
+
   const payload = toPayload(event);
   await sendToSkill(payload);
 }
