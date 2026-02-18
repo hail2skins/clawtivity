@@ -13,6 +13,70 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// ValidActivityCategories defines allowed category values
+var ValidActivityCategories = []string{"general", "admin", "code", "research", "other"}
+
+// ValidActivityStatuses defines allowed status values  
+var ValidActivityStatuses = []string{"success", "failed", "in_progress", "pending"}
+
+// Activity represents an agent activity/work session tracked by Clawtivity
+type Activity struct {
+	ID            int64     `json:"id"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+
+	// Core tracking fields
+	Category      string    `json:"category"`
+	TokensIn      int       `json:"tokens_in"`
+	TokensOut     int       `json:"tokens_out"`
+	TimeStarted   time.Time `json:"time_started"`
+	TimeCompleted time.Time `json:"time_completed"`
+	ElapsedTime   int64     `json:"elapsed_time"` // in seconds
+
+	// Model info
+	Model         string    `json:"model"`
+	Reasoning     bool      `json:"reasoning"`
+	Thinking      string    `json:"thinking"` // low, medium, high
+
+	// Work description
+	Title         string    `json:"title"`
+	Project       string    `json:"project"`
+
+	// Extended fields
+	SessionID     string    `json:"session_id"`
+	Channel       string    `json:"channel"`
+	Status        string    `json:"status"`
+	ErrorMessage  string    `json:"error_message"`
+	ToolsUsed     string    `json:"tools_used"` // JSON array as string
+	Cost          float64   `json:"cost"`
+	ParentSession string    `json:"parent_session"`
+	UserID        string    `json:"user_id"`
+	JiraTicket    string    `json:"jira_ticket"`
+	GitCommit     string    `json:"git_commit"`
+	Tags          string    `json:"tags"` // comma-separated
+	Metadata      string    `json:"metadata"` // JSON blob
+}
+
+// isValidCategory checks if the given category is valid
+func isValidCategory(category string) bool {
+	for _, c := range ValidActivityCategories {
+		if category == c {
+			return true
+		}
+	}
+	return false
+}
+
+// isValidStatus checks if the given status is valid
+func isValidStatus(status string) bool {
+	for _, s := range ValidActivityStatuses {
+		if status == s {
+			return true
+		}
+	}
+	return false
+}
+
 // Service represents a service that interacts with a database.
 type Service interface {
 	// Health returns a map of health status information.
