@@ -1,89 +1,126 @@
 # Clawtivity
 
-A self-hosted activity feed and memory tracking service for OpenClaw agents. Clawtivity enables agents to track activities, maintain memory, and share state across the OpenClaw ecosystem.
+A self-hosted, local-first activity feed and memory tracking service for OpenClaw agents.
 
 ## Overview
 
-Clawtivity is your agent's memory and activity hub — think of it as a local "what did I do today" service that persists across sessions.
+Clawtivity provides:
+- structured activity logging from hooks or agents
+- turn-level memory storage
+- query and summary APIs for reporting
+- Swagger/OpenAPI docs for API consumers
 
-### Features
-
-- Activity feed tracking
-- Memory persistence for agents
-- RESTful API for agent interactions
-- Web dashboard for human oversight
-
-## Tech Stack
+## Current Tech Stack
 
 - **Language:** Go
-- **Web Framework:** Chi router + Templ
-- **Database:** SQLite
-- **Build:** Make + Air (live reload)
+- **HTTP Framework:** Gin
+- **ORM:** GORM
+- **Database:** SQLite (local-first)
+- **Templating/UI:** Templ + Tailwind
+- **API Docs:** swaggo + gin-swagger
 
-## Getting Started
+## Quick Start
 
 ### Prerequisites
 
-- Go 1.21+
-- SQLite
-- Air (for live reload)
+- Go 1.25+
+- Air (optional, for live reload)
 
-### Installation
+### Install
 
 ```bash
-# Clone and enter project
 git clone https://github.com/hail2skins/clawtivity.git
 cd clawtivity
-
-# Install dependencies
 go mod download
-
-# Install Air for live reload
-go install github.com/air-verse/air@latest
 ```
 
-### Development
+### Run
 
 ```bash
-# Run with live reload
-make watch
-
-# Or run directly
 make run
 ```
 
-### Build & Test
+### Test
 
 ```bash
-# Run tests
 make test
-
-# Build binary
-make build
-
-# Build + test
-make all
 ```
 
-## Architecture
+## API Endpoints
 
-```
-cmd/
-├── api/          # API server entry point
-└── web/          # Frontend (Templ)
+### Activity
 
-internal/
-├── database/     # SQLite operations
-└── server/       # HTTP routes & handlers
-```
+- `POST /api/activity`
+  - Create an activity entry.
+- `GET /api/activity`
+  - List activity entries.
+  - Supported query params:
+    - `project` (maps to `project_tag`)
+    - `model`
+    - `date` (`YYYY-MM-DD`, filters by `created_at` day)
+- `GET /api/activity/summary`
+  - Aggregated stats (`count`, token totals, cost total, duration total, grouped status counts).
+  - Supports the same filters as `GET /api/activity`.
 
-## Contributing
+### Health
 
-1. All work in `dev` branch
-2. All commits MUST reference a Jira ticket (e.g., `[CLAW-123]`)
-3. Write tests FIRST (TDD)
-4. Push to remote `dev` after testing
-5. Merge to `main` when ready
+- `GET /health`
+  - Service/database health information.
+
+### Swagger UI
+
+- `GET /swagger/index.html`
+  - Interactive OpenAPI UI.
+- Generated spec artifacts:
+  - `docs/swagger.json`
+  - `docs/swagger.yaml`
+
+## Data Model Snapshot
+
+### `activity_feed`
+
+Fields:
+- `id` (UUID, primary key)
+- `session_key` (indexed)
+- `model`
+- `tokens_in`
+- `tokens_out`
+- `cost_estimate`
+- `duration_ms`
+- `project_tag` (indexed)
+- `external_ref`
+- `category` (indexed)
+- `thinking`
+- `reasoning`
+- `channel`
+- `status` (indexed)
+- `user_id` (indexed)
+- `created_at`
+
+### `turn_memories`
+
+Fields:
+- `id` (UUID, primary key)
+- `session_key` (indexed)
+- `summary`
+- `tools_used` (JSON)
+- `files_touched` (JSON)
+- `key_decisions` (JSON)
+- `context_snippet`
+- `tags` (JSON)
+- `created_at`
+
+## Development Notes
+
+- SQLite schema is managed through GORM `AutoMigrate` on startup.
+- API handlers are test-driven in `internal/server`.
+- Database schema and adapter behavior are test-driven in `internal/database`.
+
+## Contributing Rules
+
+1. Work in `dev` or feature branches first.
+2. Every commit must include a Jira ticket key (example: `[CLAW-123]`).
+3. Follow TDD: tests first, implementation second.
 
 ## License
 
