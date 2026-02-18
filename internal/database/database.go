@@ -16,51 +16,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// ValidActivityCategories defines allowed category values
-var ValidActivityCategories = []string{"general", "admin", "code", "research", "other"}
-
-// ValidActivityStatuses defines allowed status values
-var ValidActivityStatuses = []string{"success", "failed", "in_progress", "pending"}
-
-// Activity represents an agent activity/work session tracked by Clawtivity.
-// Kept for backwards compatibility with existing tests and API assumptions.
-type Activity struct {
-	ID        int64     `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-
-	// Core tracking fields
-	Category      string    `json:"category"`
-	TokensIn      int       `json:"tokens_in"`
-	TokensOut     int       `json:"tokens_out"`
-	TimeStarted   time.Time `json:"time_started"`
-	TimeCompleted time.Time `json:"time_completed"`
-	ElapsedTime   int64     `json:"elapsed_time"` // in seconds
-
-	// Model info
-	Model     string `json:"model"`
-	Reasoning bool   `json:"reasoning"`
-	Thinking  string `json:"thinking"` // low, medium, high
-
-	// Work description
-	Title   string `json:"title"`
-	Project string `json:"project"`
-
-	// Extended fields
-	SessionID     string  `json:"session_id"`
-	Channel       string  `json:"channel"`
-	Status        string  `json:"status"`
-	ErrorMessage  string  `json:"error_message"`
-	ToolsUsed     string  `json:"tools_used"` // JSON array as string
-	Cost          float64 `json:"cost"`
-	ParentSession string  `json:"parent_session"`
-	UserID        string  `json:"user_id"`
-	JiraTicket    string  `json:"jira_ticket"`
-	GitCommit     string  `json:"git_commit"`
-	Tags          string  `json:"tags"`     // comma-separated
-	Metadata      string  `json:"metadata"` // JSON blob
-}
-
 // ActivityFeed is the local-first event ledger entry.
 type ActivityFeed struct {
 	ID           string    `gorm:"type:char(36);primaryKey" json:"id"`
@@ -72,6 +27,12 @@ type ActivityFeed struct {
 	DurationMS   int64     `json:"duration_ms"`
 	ProjectTag   string    `gorm:"index:idx_activity_feed_project_tag" json:"project_tag"`
 	ExternalRef  string    `json:"external_ref"`
+	Category     string    `gorm:"index:idx_activity_feed_category" json:"category"`
+	Thinking     string    `json:"thinking"`
+	Reasoning    bool      `json:"reasoning"`
+	Channel      string    `json:"channel"`
+	Status       string    `gorm:"index:idx_activity_feed_status" json:"status"`
+	UserID       string    `gorm:"index:idx_activity_feed_user_id" json:"user_id"`
 	CreatedAt    time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
 
@@ -108,26 +69,6 @@ func (m *TurnMemory) BeforeCreate(_ *gorm.DB) error {
 		m.ID = generateUUIDv4()
 	}
 	return nil
-}
-
-// isValidCategory checks if the given category is valid.
-func isValidCategory(category string) bool {
-	for _, c := range ValidActivityCategories {
-		if category == c {
-			return true
-		}
-	}
-	return false
-}
-
-// isValidStatus checks if the given status is valid.
-func isValidStatus(status string) bool {
-	for _, s := range ValidActivityStatuses {
-		if status == s {
-			return true
-		}
-	}
-	return false
 }
 
 // Service represents a service that interacts with a database.

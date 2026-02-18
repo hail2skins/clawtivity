@@ -34,6 +34,15 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 	if !svc.db.Migrator().HasIndex(&ActivityFeed{}, "idx_activity_feed_project_tag") {
 		t.Fatal("expected activity_feed.project_tag index to exist")
 	}
+	if !svc.db.Migrator().HasIndex(&ActivityFeed{}, "idx_activity_feed_category") {
+		t.Fatal("expected activity_feed.category index to exist")
+	}
+	if !svc.db.Migrator().HasIndex(&ActivityFeed{}, "idx_activity_feed_status") {
+		t.Fatal("expected activity_feed.status index to exist")
+	}
+	if !svc.db.Migrator().HasIndex(&ActivityFeed{}, "idx_activity_feed_user_id") {
+		t.Fatal("expected activity_feed.user_id index to exist")
+	}
 	if !svc.db.Migrator().HasIndex(&TurnMemory{}, "idx_turn_memories_session_key") {
 		t.Fatal("expected turn_memories.session_key index to exist")
 	}
@@ -48,6 +57,12 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 		"duration_ms",
 		"project_tag",
 		"external_ref",
+		"category",
+		"thinking",
+		"reasoning",
+		"channel",
+		"status",
+		"user_id",
 		"created_at",
 	})
 
@@ -85,6 +100,12 @@ func TestSQLiteAdapterGeneratesUUIDPrimaryKeys(t *testing.T) {
 		CostEstimate: 0.01,
 		DurationMS:   1200,
 		ProjectTag:   "clawtivity",
+		Category:     "code",
+		Thinking:     "high",
+		Reasoning:    true,
+		Channel:      "discord",
+		Status:       "success",
+		UserID:       "art",
 	}
 
 	if err := svc.db.Create(&feed).Error; err != nil {
@@ -109,6 +130,64 @@ func TestSQLiteAdapterGeneratesUUIDPrimaryKeys(t *testing.T) {
 	}
 	if !looksLikeUUID(memory.ID) {
 		t.Fatalf("expected turn_memories.id to be a UUID, got %q", memory.ID)
+	}
+}
+
+func TestActivityFeedPersistsNewFields(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
+
+	adapter, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected adapter to initialize: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = adapter.Close()
+	})
+
+	svc := adapter.(*service)
+
+	created := ActivityFeed{
+		SessionKey:   "session-456",
+		Model:        "gpt-5",
+		TokensIn:     12,
+		TokensOut:    34,
+		CostEstimate: 0.002,
+		DurationMS:   500,
+		ProjectTag:   "clawtivity",
+		Category:     "research",
+		Thinking:     "medium",
+		Reasoning:    true,
+		Channel:      "webchat",
+		Status:       "in_progress",
+		UserID:       "user-1",
+	}
+
+	if err := svc.db.Create(&created).Error; err != nil {
+		t.Fatalf("expected create to succeed: %v", err)
+	}
+
+	var fetched ActivityFeed
+	if err := svc.db.First(&fetched, "id = ?", created.ID).Error; err != nil {
+		t.Fatalf("expected read to succeed: %v", err)
+	}
+
+	if fetched.Category != created.Category {
+		t.Fatalf("expected category %q, got %q", created.Category, fetched.Category)
+	}
+	if fetched.Thinking != created.Thinking {
+		t.Fatalf("expected thinking %q, got %q", created.Thinking, fetched.Thinking)
+	}
+	if fetched.Reasoning != created.Reasoning {
+		t.Fatalf("expected reasoning %t, got %t", created.Reasoning, fetched.Reasoning)
+	}
+	if fetched.Channel != created.Channel {
+		t.Fatalf("expected channel %q, got %q", created.Channel, fetched.Channel)
+	}
+	if fetched.Status != created.Status {
+		t.Fatalf("expected status %q, got %q", created.Status, fetched.Status)
+	}
+	if fetched.UserID != created.UserID {
+		t.Fatalf("expected user_id %q, got %q", created.UserID, fetched.UserID)
 	}
 }
 
