@@ -40,6 +40,8 @@ go mod download
 make run
 ```
 
+By default the API runs on port `18730` (override with `PORT`).
+
 ### Test
 
 ```bash
@@ -74,6 +76,68 @@ make test
 - Generated spec artifacts:
   - `docs/swagger.json`
   - `docs/swagger.yaml`
+
+## OpenClaw Integration
+
+### Skill (CLAW-7)
+
+Repository source:
+- `skills/clawtivity/SKILL.md`
+- `skills/clawtivity/scripts/log_activity.py`
+
+Local install path:
+- `~/.openclaw/skills/clawtivity/`
+
+Install/update locally:
+
+```bash
+mkdir -p ~/.openclaw/skills/clawtivity
+cp -R skills/clawtivity/. ~/.openclaw/skills/clawtivity/
+```
+
+### Hook (CLAW-15)
+
+Repository source:
+- `skills/clawtivity/hook/HOOK.md`
+- `skills/clawtivity/hook/handler.ts`
+
+Local install path:
+- `~/.openclaw/hooks/clawtivity/`
+
+Install/update locally:
+
+```bash
+mkdir -p ~/.openclaw/hooks/clawtivity
+cp skills/clawtivity/hook/HOOK.md ~/.openclaw/hooks/clawtivity/HOOK.md
+cp skills/clawtivity/hook/handler.ts ~/.openclaw/hooks/clawtivity/handler.ts
+```
+
+The hook is configured for `after_agent_turn` and pipes normalized turn JSON into:
+
+```bash
+echo "$JSON" | python3 ~/.openclaw/skills/clawtivity/scripts/log_activity.py
+```
+
+### Retry/Fallback Behavior
+
+- POST target: `http://localhost:18730/api/activity`
+- Retries: `1s`, `2s`, `4s` exponential backoff (3 attempts total)
+- Fallback queue on failure: `~/.clawtivity/queue/YYYY-MM-DD.md`
+- Queue replay on next successful POST
+
+### Verify Hook Wiring
+
+```bash
+openclaw hooks list --json
+openclaw hooks enable clawtivity
+```
+
+Then send a message/turn through OpenClaw and verify ingestion:
+
+```bash
+curl "http://localhost:18730/api/activity"
+curl "http://localhost:18730/api/activity/summary"
+```
 
 ## Data Model Snapshot
 
