@@ -19,7 +19,7 @@ type Server struct {
 }
 
 func NewServer() *http.Server {
-	port, _ := strconv.Atoi(os.Getenv("PORT"))
+	port := resolvePort()
 	NewServer := &Server{
 		port: port,
 
@@ -36,4 +36,18 @@ func NewServer() *http.Server {
 	}
 
 	return server
+}
+
+func resolvePort() int {
+	value := os.Getenv("PORT")
+	if value == "" {
+		return 18730
+	}
+
+	port, err := strconv.Atoi(value)
+	if err != nil || port <= 0 {
+		return 18730
+	}
+
+	return port
 }

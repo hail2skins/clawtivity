@@ -10,7 +10,6 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"clawtivity/cmd/web"
-	"github.com/a-h/templ"
 	"io/fs"
 )
 
@@ -36,7 +35,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.StaticFS("/assets", http.FS(staticFiles))
 
 	r.GET("/web", func(c *gin.Context) {
-		templ.Handler(web.HelloForm()).ServeHTTP(c.Writer, c.Request)
+		web.DashboardHandler(c.Writer, c.Request)
 	})
 
 	r.POST("/hello", func(c *gin.Context) {
