@@ -1,0 +1,13 @@
+{
+  "name": "clawtivity-activity",
+  "version": "0.1.0",
+  "description": "Reliable outbound claw activity logging via OpenClaw plugin hooks.",
+  "main": "index.js",
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  },
+  "private": true,
+  "license": "MIT"
+}

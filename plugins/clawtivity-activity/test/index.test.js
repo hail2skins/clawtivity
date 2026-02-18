@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
   buildActivityPayload,
@@ -64,4 +66,15 @@ test('buildActivityPayload produces fallback session key when recent context abs
   assert.equal(payload.status, 'failed');
   assert.equal(payload.project_tag, 'clawtivity');
   assert.equal(payload.created_at, '2026-02-18T00:00:00Z');
+});
+
+test('plugin package metadata exists for openclaw install', () => {
+  const pkgPath = path.join(__dirname, '..', 'package.json');
+  const raw = fs.readFileSync(pkgPath, 'utf8');
+  const pkg = JSON.parse(raw);
+
+  assert.equal(pkg.name, 'clawtivity-activity');
+  assert.equal(pkg.main, 'index.js');
+  assert.ok(pkg.version);
+  assert.deepEqual(pkg.openclaw && pkg.openclaw.extensions, ['./index.js']);
 });
