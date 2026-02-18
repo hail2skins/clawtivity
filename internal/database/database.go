@@ -221,11 +221,26 @@ func (s *service) SummarizeActivities(ctx context.Context, filters ActivityFilte
 		return ActivitySummary{}, err
 	}
 
-	var summary ActivitySummary
+	// Use a temp struct to avoid GORM trying to map to ByStatus map field
+	var result struct {
+		Count          int64   `json:"count"`
+		TokensInTotal  int64   `json:"tokens_in_total"`
+		TokensOutTotal int64   `json:"tokens_out_total"`
+		CostTotal      float64 `json:"cost_total"`
+		DurationTotal  int64   `json:"duration_ms_total"`
+	}
 	if err := tx.Select(
 		"COUNT(*) AS count, COALESCE(SUM(tokens_in), 0) AS tokens_in_total, COALESCE(SUM(tokens_out), 0) AS tokens_out_total, COALESCE(SUM(cost_estimate), 0) AS cost_total, COALESCE(SUM(duration_ms), 0) AS duration_ms_total",
-	).Scan(&summary).Error; err != nil {
+	).Scan(&result).Error; err != nil {
 		return ActivitySummary{}, err
+	}
+
+	summary := ActivitySummary{
+		Count:            result.Count,
+		TokensInTotal:    result.TokensInTotal,
+		TokensOutTotal:   result.TokensOutTotal,
+		CostTotal:        result.CostTotal,
+		DurationMSTotal:  result.DurationTotal,
 	}
 
 	statusTx, err := applyActivityFilters(s.db.WithContext(ctx).Model(&ActivityFeed{}), filters)
