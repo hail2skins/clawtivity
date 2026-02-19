@@ -113,8 +113,9 @@ openclaw plugins list --json
 ```
 
 Behavior:
-- listens to `llm_output`, `message_sent`, and `agent_end`
-- captures outbound assistant activity and failed turns
+- listens to `llm_output`, `message_received`, `message_sending`, and `agent_end`
+- uses `agent_end` as the primary write trigger for reliable turn logging
+- captures assistant turn outcomes (`success` / `failed`) and best-effort model/token usage
 - pipes normalized JSON into:
 
 ```bash
@@ -159,7 +160,7 @@ The retry/fallback behavior is implemented in `skills/clawtivity/scripts/log_act
 openclaw plugins list --json
 openclaw hooks list --json
 openclaw plugins enable clawtivity-activity
-openclaw hooks enable clawtivity
+openclaw hooks disable clawtivity
 ```
 
 Then send a message/turn through OpenClaw and verify ingestion:
@@ -167,6 +168,19 @@ Then send a message/turn through OpenClaw and verify ingestion:
 ```bash
 curl "http://localhost:18730/api/activity"
 curl "http://localhost:18730/api/activity/summary"
+```
+
+Expected behavior:
+- new rows should be written on bot turn completion
+- legacy `pending` rows may exist from older hook-based runs, but new plugin writes should be `success`/`failed`
+
+If plugin install state gets stuck:
+
+```bash
+printf 'y\n' | openclaw plugins uninstall clawtivity-activity
+rm -rf ~/.openclaw/extensions/clawtivity-activity
+openclaw plugins install ./plugins/clawtivity-activity
+openclaw plugins enable clawtivity-activity
 ```
 
 ## Data Model Snapshot
