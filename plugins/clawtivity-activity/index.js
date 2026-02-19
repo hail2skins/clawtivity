@@ -1,6 +1,7 @@
 const { spawn } = require('node:child_process');
 const os = require('node:os');
 const path = require('node:path');
+const fs = require('node:fs');
 
 const DEFAULT_FRESHNESS_MS = 60_000;
 
@@ -59,6 +60,11 @@ function modelFromEvent(event, ctx) {
       || (ctx && (ctx.model || (ctx.metadata && ctx.metadata.model))),
     'unknown-model'
   );
+}
+
+function statusFromSuccess(success) {
+  if (success === false) return 'failed';
+  return 'success';
 }
 
 function buildActivityPayload(params) {
@@ -158,12 +164,26 @@ function resolveSkillPath(pluginConfig) {
   );
 }
 
-function sendToSkill(skillPath, apiUrl, payload, logger) {
+function getPythonCandidates() {
+  return ['python3', '/usr/bin/python3', '/opt/homebrew/bin/python3'];
+}
+
+function appendPluginError(line) {
+  try {
+    const dir = path.join(os.homedir(), '.clawtivity');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, 'plugin-errors.log'), `${new Date().toISOString()} ${line}\n`, 'utf8');
+  } catch (_) {
+    // best effort only
+  }
+}
+
+function runSkill(pythonBin, skillPath, apiUrl, payload) {
   return new Promise((resolve, reject) => {
     const args = [skillPath];
     if (apiUrl) args.push('--api-url', apiUrl);
 
-    const child = spawn('python3', args, {
+    const child = spawn(pythonBin, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: process.env,
     });
@@ -179,14 +199,30 @@ function sendToSkill(skillPath, apiUrl, payload, logger) {
         resolve();
         return;
       }
-      reject(new Error(`clawtivity skill exited ${code}: ${stderr.trim()}`));
+      reject(new Error(`${pythonBin} exited ${code}: ${stderr.trim()}`));
     });
 
     child.stdin.write(JSON.stringify(payload));
     child.stdin.end();
-  }).catch((err) => {
-    logger.warn(`[clawtivity-activity] failed to dispatch payload: ${String(err)}`);
   });
+}
+
+async function sendToSkill(skillPath, apiUrl, payload, logger) {
+  let lastError;
+  for (const pythonBin of getPythonCandidates()) {
+    try {
+      await runSkill(pythonBin, skillPath, apiUrl, payload);
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  const errorMessage = `[clawtivity-activity] failed to dispatch payload: ${String(lastError)}`;
+  appendPluginError(errorMessage);
+  if (logger && typeof logger.warn === 'function') {
+    logger.warn(errorMessage);
+  }
 }
 
 module.exports = {
@@ -200,9 +236,9 @@ module.exports = {
     const apiUrl = asString(pluginConfig.apiUrl, '');
     const configuredProjectTag = asString(pluginConfig.projectTag, '');
     const configuredUserId = asString(pluginConfig.userId, '');
-    const freshnessMs = asInt(pluginConfig.freshnessMs, DEFAULT_FRESHNESS_MS);
 
     const recentByChannel = new Map();
+    const userByChannel = new Map();
 
     api.on('llm_output', (event, ctx) => {
       const channel = channelKeyFromContext(ctx, event);
@@ -222,57 +258,55 @@ module.exports = {
       });
     });
 
+    api.on('message_received', (event, ctx) => {
+      const channel = channelKeyFromContext(ctx, event);
+      const from = asString(event && event.from, '');
+      if (!from) return;
+      userByChannel.set(channel, from);
+    });
+
+    api.on('message_sending', (event, ctx) => {
+      const channel = channelKeyFromContext(ctx, event);
+      const to = asString(event && event.to, '');
+      if (!to) return;
+      userByChannel.set(channel, to);
+    });
+
     api.on('agent_end', (event, ctx) => {
       const channel = channelKeyFromContext(ctx, event);
       const recent = recentByChannel.get(channel);
-      if (recent) {
-        recent.durationMs = asInt(event && event.durationMs, 0);
-        recent.ts = Date.now();
-        recentByChannel.set(channel, recent);
-      }
+      const usage = extractUsage(event);
+      const current = recent || {
+        ts: Date.now(),
+        sessionKey: sessionKeyFromContext(ctx),
+        model: modelFromEvent(event, ctx),
+        tokensIn: usage.tokensIn,
+        tokensOut: usage.tokensOut,
+        durationMs: 0,
+        projectTag: configuredProjectTag || path.basename(asString(ctx && ctx.workspaceDir, process.cwd())),
+        userId: configuredUserId || userByChannel.get(channel) || 'unknown-user',
+      };
+      current.durationMs = asInt(event && event.durationMs, 0);
+      current.ts = Date.now();
+      recentByChannel.set(channel, current);
 
-      // Fallback: if turn failed before message delivery, still log activity.
-      if (event && event.success === false) {
-        const usage = extractUsage(event);
-        const payload = buildActivityPayload({
-          sessionKey: sessionKeyFromContext(ctx),
-          model: recent ? recent.model : modelFromEvent(event, ctx),
-          tokensIn: recent ? recent.tokensIn : usage.tokensIn,
-          tokensOut: recent ? recent.tokensOut : usage.tokensOut,
-          durationMs: asInt(event && event.durationMs, 0),
-          projectTag: configuredProjectTag || (recent ? recent.projectTag : path.basename(asString(ctx && ctx.workspaceDir, process.cwd()))),
-          channel,
-          userId: configuredUserId || (recent ? recent.userId : 'unknown-user'),
-          status: 'failed',
-          toolsUsed: [],
-          nowIso: nowIso(),
-          fallbackSessionSeed: `failed:${channel}:${Date.now()}`,
-        });
-        return sendToSkill(skillPath, apiUrl, payload, api.logger);
-      }
+      const payload = buildActivityPayload({
+        sessionKey: current.sessionKey,
+        model: current.model,
+        tokensIn: current.tokensIn,
+        tokensOut: current.tokensOut,
+        durationMs: current.durationMs,
+        projectTag: configuredProjectTag || current.projectTag,
+        channel,
+        userId: configuredUserId || userByChannel.get(channel) || current.userId,
+        status: statusFromSuccess(event && event.success),
+        toolsUsed: [],
+        nowIso: nowIso(),
+        fallbackSessionSeed: `agent-end:${channel}:${Date.now()}`,
+      });
 
       // Touch assistant content so future enhancements can include it.
       extractAssistantText(event && event.messages);
-      return undefined;
-    });
-
-    api.on('message_sent', (event, ctx) => {
-      const now = Date.now();
-      const channelId = channelKeyFromContext(ctx, event);
-      const recent = recentByChannel.get(channelId);
-
-      const payload = mergeRecentByChannel({
-        channelId,
-        eventTo: asString(event && event.to, ''),
-        conversationId: asString(ctx && ctx.conversationId, ''),
-        success: Boolean(event && event.success),
-        recent,
-        now,
-        freshnessMs,
-        projectTag: configuredProjectTag,
-        userId: configuredUserId,
-      });
-
       return sendToSkill(skillPath, apiUrl, payload, api.logger);
     });
   },
@@ -284,4 +318,6 @@ module.exports = {
   extractAssistantText,
   channelKeyFromContext,
   extractUsage,
+  statusFromSuccess,
+  getPythonCandidates,
 };

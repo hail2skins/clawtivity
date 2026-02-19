@@ -9,6 +9,8 @@ const {
   shouldUseRecent,
   channelKeyFromContext,
   extractUsage,
+  statusFromSuccess,
+  getPythonCandidates,
 } = require('../index.js');
 
 test('shouldUseRecent enforces freshness window', () => {
@@ -100,4 +102,16 @@ test('extractUsage supports multiple event usage shapes', () => {
     extractUsage({ usage: { prompt_tokens: 3, completion_tokens: 4 } }),
     { tokensIn: 3, tokensOut: 4 },
   );
+});
+
+test('statusFromSuccess maps booleans to activity status strings', () => {
+  assert.equal(statusFromSuccess(true), 'success');
+  assert.equal(statusFromSuccess(false), 'failed');
+  assert.equal(statusFromSuccess(undefined), 'success');
+});
+
+test('getPythonCandidates includes explicit python fallback paths', () => {
+  const candidates = getPythonCandidates();
+  assert.ok(candidates.includes('python3'));
+  assert.ok(candidates.includes('/usr/bin/python3'));
 });
