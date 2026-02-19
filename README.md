@@ -5,7 +5,7 @@ A self-hosted, local-first activity feed and memory tracking service for OpenCla
 ## Overview
 
 Clawtivity provides:
-- structured activity logging from hooks or agents
+- structured activity logging from OpenClaw agents
 - turn-level memory storage
 - query and summary APIs for reporting
 - Swagger/OpenAPI docs for API consumers
@@ -79,7 +79,7 @@ make test
 
 ## OpenClaw Integration
 
-### Skill (CLAW-7)
+### Skill Script (CLAW-7, optional utility)
 
 Repository source:
 - `skills/clawtivity/SKILL.md`
@@ -95,8 +95,7 @@ mkdir -p ~/.openclaw/skills/clawtivity
 cp -R skills/clawtivity/. ~/.openclaw/skills/clawtivity/
 ```
 
-This skill script is the ingestion client for the hook path (legacy/optional).
-It handles retry, fallback queueing, and replay.
+This script can be used manually for payload posting/replay workflows.
 
 ### Plugin (CLAW-16, primary/reliable)
 
@@ -126,29 +125,6 @@ Optional plugin config fields (in OpenClaw plugin config):
 - `projectTag`
 - `userId`
 
-### Hook (CLAW-15, legacy/optional)
-
-Repository source:
-- `skills/clawtivity/hook/HOOK.md`
-- `skills/clawtivity/hook/handler.ts`
-
-Local install path:
-- `~/.openclaw/hooks/clawtivity/`
-
-Install/update locally:
-
-```bash
-mkdir -p ~/.openclaw/hooks/clawtivity
-cp skills/clawtivity/hook/HOOK.md ~/.openclaw/hooks/clawtivity/HOOK.md
-cp skills/clawtivity/hook/handler.ts ~/.openclaw/hooks/clawtivity/handler.ts
-```
-
-The hook is configured for `message:sent` and pipes normalized turn JSON into:
-
-```bash
-echo "$JSON" | python3 ~/.openclaw/skills/clawtivity/scripts/log_activity.py
-```
-
 ### Retry/Fallback Behavior
 
 - POST target: `http://localhost:18730/api/activity`
@@ -158,7 +134,7 @@ echo "$JSON" | python3 ~/.openclaw/skills/clawtivity/scripts/log_activity.py
 
 Retry/fallback behavior:
 - plugin path: JS-native retry + write-only queue fallback in `plugins/clawtivity-activity/index.js`
-- skill path: retry + fallback queue + replay in `skills/clawtivity/scripts/log_activity.py` (legacy/optional)
+- skill script path: retry + fallback queue + replay in `skills/clawtivity/scripts/log_activity.py` (optional utility)
 
 Queue replay behavior:
 - API startup automatically drains queue files from `~/.clawtivity/queue` (or `CLAWTIVITY_QUEUE_DIR`)
@@ -169,9 +145,7 @@ Queue replay behavior:
 
 ```bash
 openclaw plugins list --json
-openclaw hooks list --json
 openclaw plugins enable clawtivity-activity
-openclaw hooks disable clawtivity
 ```
 
 Then send a message/turn through OpenClaw and verify ingestion:
@@ -183,7 +157,7 @@ curl "http://localhost:18730/api/activity/summary"
 
 Expected behavior:
 - new rows should be written on bot turn completion
-- legacy `pending` rows may exist from older hook-based runs, but new plugin writes should be `success`/`failed`
+- plugin writes should be `success`/`failed`
 
 If plugin install state gets stuck:
 
@@ -234,12 +208,6 @@ Fields:
 - SQLite schema is managed through GORM `AutoMigrate` on startup.
 - API handlers are test-driven in `internal/server`.
 - Database schema and adapter behavior are test-driven in `internal/database`.
-
-## Contributing Rules
-
-1. Work in `dev` or feature branches first.
-2. Every commit must include a Jira ticket key (example: `[CLAW-123]`).
-3. Follow TDD: tests first, implementation second.
 
 ## License
 

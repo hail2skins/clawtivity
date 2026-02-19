@@ -14,7 +14,7 @@ type APIError struct {
 
 // createActivityHandler godoc
 // @Summary Create activity
-// @Description Create new activity entry from OpenClaw hook payload.
+// @Description Create new activity entry from OpenClaw activity payload.
 // @Tags activities
 // @Accept json
 // @Produce json

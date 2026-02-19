@@ -10,14 +10,12 @@ This skill sends activity payloads to local Clawtivity API:
 - `POST http://localhost:18730/api/activity`
 - `Content-Type: application/json`
 
-It is designed to be called by:
+It is designed to complement:
+- the CLAW-16/18 plugin (`plugins/clawtivity-activity/`) for reliable outbound assistant telemetry
 
-- the CLAW-16 plugin (`plugins/clawtivity-activity/`) for reliable outbound assistant telemetry
-- the optional legacy hook (`skills/clawtivity/hook/`) for `message:sent` bridging
+## Usage
 
-## Hook Usage
-
-Configure OpenClaw plugin/hook handlers to pipe turn JSON payload to:
+Pipe turn JSON payload to:
 
 ```bash
 python3 clawtivity/scripts/log_activity.py
