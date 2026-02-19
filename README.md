@@ -109,6 +109,7 @@ Install and enable:
 ```bash
 openclaw plugins install ./plugins/clawtivity-activity
 openclaw plugins enable clawtivity-activity
+openclaw gateway restart
 openclaw plugins list --json
 ```
 
@@ -152,8 +153,8 @@ echo "$JSON" | python3 ~/.openclaw/skills/clawtivity/scripts/log_activity.py
 
 - POST target: `http://localhost:18730/api/activity`
 - Retries: `1s`, `2s`, `4s` exponential backoff (3 attempts total)
-- Fallback queue on failure: `~/.clawtivity/queue/YYYY-MM-DD.md`
-- Queue replay on next successful POST
+- Fallback queue on failure: `~/.clawtivity/queue/YYYY-MM-DD.md` (home directory)
+- Queue replay occurs on API startup flush
 
 Retry/fallback behavior:
 - plugin path: JS-native retry + write-only queue fallback in `plugins/clawtivity-activity/index.js`
