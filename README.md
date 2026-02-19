@@ -117,9 +117,11 @@ Behavior:
 - uses `agent_end` as the primary write trigger for reliable turn logging
 - captures assistant turn outcomes (`success` / `failed`) and best-effort model/token usage
 - posts normalized JSON directly to `POST /api/activity` via in-plugin JS
+- on API outage, writes fallback payloads to local queue markdown files
 
 Optional plugin config fields (in OpenClaw plugin config):
 - `apiUrl` (default `http://localhost:18730/api/activity`)
+- `queueRoot` (default `~/.clawtivity/queue`)
 - `projectTag`
 - `userId`
 
@@ -154,8 +156,13 @@ echo "$JSON" | python3 ~/.openclaw/skills/clawtivity/scripts/log_activity.py
 - Queue replay on next successful POST
 
 Retry/fallback behavior:
-- plugin path: JS-native retry in `plugins/clawtivity-activity/index.js`
+- plugin path: JS-native retry + write-only queue fallback in `plugins/clawtivity-activity/index.js`
 - skill path: retry + fallback queue + replay in `skills/clawtivity/scripts/log_activity.py` (legacy/optional)
+
+Queue replay behavior:
+- API startup automatically drains queue files from `~/.clawtivity/queue` (or `CLAWTIVITY_QUEUE_DIR`)
+- successfully imported entries are removed from queue files
+- empty queue files are deleted
 
 ### Verify Wiring
 

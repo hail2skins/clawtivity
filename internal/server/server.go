@@ -26,6 +26,8 @@ func NewServer() *http.Server {
 		db: database.New(),
 	}
 
+	flushQueueOnStartup(NewServer.db)
+
 	// Declare Server config
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", NewServer.port),

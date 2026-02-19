@@ -8,6 +8,7 @@
     "additionalProperties": false,
     "properties": {
       "apiUrl": { "type": "string" },
+      "queueRoot": { "type": "string" },
       "projectTag": { "type": "string" },
       "userId": { "type": "string" }
     }

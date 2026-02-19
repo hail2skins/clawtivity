@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const {
@@ -11,6 +12,7 @@ const {
   extractUsage,
   statusFromSuccess,
   postWithRetry,
+  sendToApi,
 } = require('../index.js');
 
 test('shouldUseRecent enforces freshness window', () => {
@@ -141,4 +143,26 @@ test('postWithRetry retries with backoff and fails cleanly after final failure',
   assert.equal(ok, false);
   assert.equal(calls, 3);
   assert.deepEqual(sleeps, [1, 2]);
+});
+
+test('sendToApi queues payload to markdown file after retry exhaustion', async () => {
+  const queueRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clawtivity-plugin-queue-'));
+  const payload = { session_key: 'queued-session', model: 'gpt-5' };
+
+  await sendToApi(payload, {
+    apiUrl: 'http://localhost:18730/api/activity',
+    queueRoot,
+    logger: { warn: () => {} },
+    postJson: async () => {
+      throw new Error('down');
+    },
+    sleep: async () => {},
+    backoffsMs: [1, 2, 4],
+  });
+
+  const files = fs.readdirSync(queueRoot).filter((name) => name.endsWith('.md'));
+  assert.equal(files.length, 1);
+
+  const body = fs.readFileSync(path.join(queueRoot, files[0]), 'utf8');
+  assert.match(body, /"session_key":"queued-session"/);
 });

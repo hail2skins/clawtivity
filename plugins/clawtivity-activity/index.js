@@ -1,8 +1,11 @@
 const path = require('node:path');
+const os = require('node:os');
+const fs = require('node:fs');
 
 const DEFAULT_FRESHNESS_MS = 60_000;
 const DEFAULT_BACKOFF_MS = [1000, 2000, 4000];
 const DEFAULT_API_URL = 'http://localhost:18730/api/activity';
+const DEFAULT_QUEUE_ROOT = path.join(os.homedir(), '.clawtivity', 'queue');
 
 function nowIso() {
   return new Date().toISOString();
@@ -209,15 +212,48 @@ function resolveApiUrl(pluginConfig) {
   return asString(pluginConfig && pluginConfig.apiUrl, DEFAULT_API_URL);
 }
 
+function resolveQueueRoot(pluginConfig) {
+  return asString(pluginConfig && pluginConfig.queueRoot, DEFAULT_QUEUE_ROOT);
+}
+
+function enqueuePayload(queueRoot, payload) {
+  fs.mkdirSync(queueRoot, { recursive: true });
+
+  const now = new Date();
+  const yyyy = String(now.getFullYear());
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const filePath = path.join(queueRoot, `${yyyy}-${mm}-${dd}.md`);
+
+  if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(filePath, `# Clawtivity Fallback Queue (${yyyy}-${mm}-${dd})\n\n`, 'utf8');
+  }
+
+  const block = [
+    `## queued_at: ${nowIso()}`,
+    '```json',
+    JSON.stringify(payload),
+    '```',
+    '',
+  ].join('\n');
+
+  fs.appendFileSync(filePath, block, 'utf8');
+}
+
 async function sendToApi(payload, options = {}) {
   const {
     apiUrl = DEFAULT_API_URL,
+    queueRoot = DEFAULT_QUEUE_ROOT,
     logger,
+    postJson,
+    sleep,
+    backoffsMs,
   } = options;
 
-  const ok = await postWithRetry({ payload, apiUrl, logger });
+  const ok = await postWithRetry({ payload, apiUrl, logger, postJson, sleep, backoffsMs });
   if (!ok && logger && typeof logger.warn === 'function') {
-    logger.warn('[clawtivity-activity] payload dropped after retries');
+    enqueuePayload(queueRoot, payload);
+    logger.warn('[clawtivity-activity] payload queued after retries');
   }
 }
 
@@ -229,6 +265,7 @@ module.exports = {
   register(api) {
     const pluginConfig = (api && api.pluginConfig) || {};
     const apiUrl = resolveApiUrl(pluginConfig);
+    const queueRoot = resolveQueueRoot(pluginConfig);
     const configuredProjectTag = asString(pluginConfig.projectTag, '');
     const configuredUserId = asString(pluginConfig.userId, '');
 
@@ -302,7 +339,7 @@ module.exports = {
 
       // Touch assistant content so future enhancements can include it.
       extractAssistantText(event && event.messages);
-      return sendToApi(payload, { apiUrl, logger: api.logger });
+      return sendToApi(payload, { apiUrl, queueRoot, logger: api.logger });
     });
   },
 
@@ -315,4 +352,5 @@ module.exports = {
   extractUsage,
   statusFromSuccess,
   postWithRetry,
+  sendToApi,
 };
