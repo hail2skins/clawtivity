@@ -30,6 +30,37 @@ function shouldUseRecent(recent, now = Date.now(), freshnessMs = DEFAULT_FRESHNE
   return now - recent.ts <= freshnessMs;
 }
 
+function channelKeyFromContext(ctx, event) {
+  return asString(
+    (ctx && (ctx.channelId || ctx.messageProvider || ctx.commandSource))
+      || (event && (event.channelId || event.to)),
+    'unknown-channel'
+  );
+}
+
+function sessionKeyFromContext(ctx) {
+  return asString(
+    (ctx && (ctx.sessionKey || ctx.conversationId || (ctx.session && ctx.session.key))),
+    ''
+  );
+}
+
+function extractUsage(event) {
+  const usage = (event && event.usage) || {};
+  return {
+    tokensIn: asInt(usage.input ?? usage.input_tokens ?? usage.prompt_tokens, 0),
+    tokensOut: asInt(usage.output ?? usage.output_tokens ?? usage.completion_tokens, 0),
+  };
+}
+
+function modelFromEvent(event, ctx) {
+  return asString(
+    (event && (event.model || (event.result && event.result.model)))
+      || (ctx && (ctx.model || (ctx.metadata && ctx.metadata.model))),
+    'unknown-model'
+  );
+}
+
 function buildActivityPayload(params) {
   const {
     sessionKey,
@@ -174,16 +205,17 @@ module.exports = {
     const recentByChannel = new Map();
 
     api.on('llm_output', (event, ctx) => {
-      const channel = asString(ctx && ctx.messageProvider, 'unknown-channel');
-      const sessionKey = asString(ctx && ctx.sessionKey, '');
+      const channel = channelKeyFromContext(ctx, event);
+      const sessionKey = sessionKeyFromContext(ctx);
       if (!sessionKey) return;
+      const usage = extractUsage(event);
 
       recentByChannel.set(channel, {
         ts: Date.now(),
         sessionKey,
-        model: asString(event && event.model, 'unknown-model'),
-        tokensIn: asInt(event && event.usage && event.usage.input, 0),
-        tokensOut: asInt(event && event.usage && event.usage.output, 0),
+        model: modelFromEvent(event, ctx),
+        tokensIn: usage.tokensIn,
+        tokensOut: usage.tokensOut,
         durationMs: 0,
         projectTag: configuredProjectTag || path.basename(asString(ctx && ctx.workspaceDir, process.cwd())),
         userId: configuredUserId || 'unknown-user',
@@ -191,7 +223,7 @@ module.exports = {
     });
 
     api.on('agent_end', (event, ctx) => {
-      const channel = asString(ctx && ctx.messageProvider, 'unknown-channel');
+      const channel = channelKeyFromContext(ctx, event);
       const recent = recentByChannel.get(channel);
       if (recent) {
         recent.durationMs = asInt(event && event.durationMs, 0);
@@ -201,11 +233,12 @@ module.exports = {
 
       // Fallback: if turn failed before message delivery, still log activity.
       if (event && event.success === false) {
+        const usage = extractUsage(event);
         const payload = buildActivityPayload({
-          sessionKey: asString(ctx && ctx.sessionKey, ''),
-          model: recent ? recent.model : 'unknown-model',
-          tokensIn: recent ? recent.tokensIn : 0,
-          tokensOut: recent ? recent.tokensOut : 0,
+          sessionKey: sessionKeyFromContext(ctx),
+          model: recent ? recent.model : modelFromEvent(event, ctx),
+          tokensIn: recent ? recent.tokensIn : usage.tokensIn,
+          tokensOut: recent ? recent.tokensOut : usage.tokensOut,
           durationMs: asInt(event && event.durationMs, 0),
           projectTag: configuredProjectTag || (recent ? recent.projectTag : path.basename(asString(ctx && ctx.workspaceDir, process.cwd()))),
           channel,
@@ -225,7 +258,7 @@ module.exports = {
 
     api.on('message_sent', (event, ctx) => {
       const now = Date.now();
-      const channelId = asString(ctx && ctx.channelId, 'unknown-channel');
+      const channelId = channelKeyFromContext(ctx, event);
       const recent = recentByChannel.get(channelId);
 
       const payload = mergeRecentByChannel({
@@ -249,4 +282,6 @@ module.exports = {
   mergeRecentByChannel,
   shouldUseRecent,
   extractAssistantText,
+  channelKeyFromContext,
+  extractUsage,
 };

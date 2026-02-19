@@ -7,6 +7,8 @@ const {
   buildActivityPayload,
   mergeRecentByChannel,
   shouldUseRecent,
+  channelKeyFromContext,
+  extractUsage,
 } = require('../index.js');
 
 test('shouldUseRecent enforces freshness window', () => {
@@ -77,4 +79,25 @@ test('plugin package metadata exists for openclaw install', () => {
   assert.equal(pkg.main, 'index.js');
   assert.ok(pkg.version);
   assert.deepEqual(pkg.openclaw && pkg.openclaw.extensions, ['./index.js']);
+});
+
+test('channelKeyFromContext prefers channelId then messageProvider', () => {
+  assert.equal(channelKeyFromContext({ channelId: 'telegram', messageProvider: 'discord' }, {}), 'telegram');
+  assert.equal(channelKeyFromContext({ messageProvider: 'discord' }, {}), 'discord');
+  assert.equal(channelKeyFromContext({}, { to: 'user-1' }), 'user-1');
+});
+
+test('extractUsage supports multiple event usage shapes', () => {
+  assert.deepEqual(
+    extractUsage({ usage: { input: 10, output: 20 } }),
+    { tokensIn: 10, tokensOut: 20 },
+  );
+  assert.deepEqual(
+    extractUsage({ usage: { input_tokens: 7, output_tokens: 9 } }),
+    { tokensIn: 7, tokensOut: 9 },
+  );
+  assert.deepEqual(
+    extractUsage({ usage: { prompt_tokens: 3, completion_tokens: 4 } }),
+    { tokensIn: 3, tokensOut: 4 },
+  );
 });
