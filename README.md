@@ -19,6 +19,15 @@ Clawtivity provides:
 - **Templating/UI:** Templ + Tailwind
 - **API Docs:** swaggo + gin-swagger
 
+## Database Support (Current)
+
+- Supported database engine: **SQLite only** (at this stage).
+- Default DB file: `./test.db` (unless overridden by `BLUEPRINT_DB_URL`).
+- GORM `AutoMigrate` runs automatically on startup for the configured SQLite database.
+- You do **not** need the `sqlite3` CLI tool installed; the app uses the Go SQLite driver.
+
+Planned support for PostgreSQL/MySQL will be added in a separate ticket.
+
 ## Quick Start
 
 ### Prerequisites
