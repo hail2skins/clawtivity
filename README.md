@@ -95,7 +95,7 @@ mkdir -p ~/.openclaw/skills/clawtivity
 cp -R skills/clawtivity/. ~/.openclaw/skills/clawtivity/
 ```
 
-This skill script is the ingestion client used by both hook and plugin paths.
+This skill script is the ingestion client for the hook path (legacy/optional).
 It handles retry, fallback queueing, and replay.
 
 ### Plugin (CLAW-16, primary/reliable)
@@ -116,11 +116,12 @@ Behavior:
 - listens to `llm_output`, `message_received`, `message_sending`, and `agent_end`
 - uses `agent_end` as the primary write trigger for reliable turn logging
 - captures assistant turn outcomes (`success` / `failed`) and best-effort model/token usage
-- pipes normalized JSON into:
+- posts normalized JSON directly to `POST /api/activity` via in-plugin JS
 
-```bash
-python3 ~/.openclaw/skills/clawtivity/scripts/log_activity.py
-```
+Optional plugin config fields (in OpenClaw plugin config):
+- `apiUrl` (default `http://localhost:18730/api/activity`)
+- `projectTag`
+- `userId`
 
 ### Hook (CLAW-15, legacy/optional)
 
@@ -152,7 +153,9 @@ echo "$JSON" | python3 ~/.openclaw/skills/clawtivity/scripts/log_activity.py
 - Fallback queue on failure: `~/.clawtivity/queue/YYYY-MM-DD.md`
 - Queue replay on next successful POST
 
-The retry/fallback behavior is implemented in `skills/clawtivity/scripts/log_activity.py`.
+Retry/fallback behavior:
+- plugin path: JS-native retry in `plugins/clawtivity-activity/index.js`
+- skill path: retry + fallback queue + replay in `skills/clawtivity/scripts/log_activity.py` (legacy/optional)
 
 ### Verify Wiring
 

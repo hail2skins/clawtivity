@@ -10,7 +10,7 @@ const {
   channelKeyFromContext,
   extractUsage,
   statusFromSuccess,
-  getPythonCandidates,
+  postWithRetry,
 } = require('../index.js');
 
 test('shouldUseRecent enforces freshness window', () => {
@@ -83,6 +83,18 @@ test('plugin package metadata exists for openclaw install', () => {
   assert.deepEqual(pkg.openclaw && pkg.openclaw.extensions, ['./index.js']);
 });
 
+test('plugin source does not use child_process', () => {
+  const pluginPath = path.join(__dirname, '..', 'index.js');
+  const source = fs.readFileSync(pluginPath, 'utf8');
+  assert.equal(source.includes('child_process'), false);
+});
+
+test('plugin source does not read queue files', () => {
+  const pluginPath = path.join(__dirname, '..', 'index.js');
+  const source = fs.readFileSync(pluginPath, 'utf8');
+  assert.equal(source.includes('readFileSync'), false);
+});
+
 test('channelKeyFromContext prefers channelId then messageProvider', () => {
   assert.equal(channelKeyFromContext({ channelId: 'telegram', messageProvider: 'discord' }, {}), 'telegram');
   assert.equal(channelKeyFromContext({ messageProvider: 'discord' }, {}), 'discord');
@@ -110,8 +122,23 @@ test('statusFromSuccess maps booleans to activity status strings', () => {
   assert.equal(statusFromSuccess(undefined), 'success');
 });
 
-test('getPythonCandidates includes explicit python fallback paths', () => {
-  const candidates = getPythonCandidates();
-  assert.ok(candidates.includes('python3'));
-  assert.ok(candidates.includes('/usr/bin/python3'));
+test('postWithRetry retries with backoff and fails cleanly after final failure', async () => {
+  const payload = { session_key: 's1' };
+  const sleeps = [];
+  let calls = 0;
+
+  const ok = await postWithRetry({
+    payload,
+    apiUrl: 'http://localhost:18730/api/activity',
+    backoffsMs: [1, 2, 4],
+    sleep: async (ms) => sleeps.push(ms),
+    postJson: async () => {
+      calls += 1;
+      throw new Error('boom');
+    },
+  });
+
+  assert.equal(ok, false);
+  assert.equal(calls, 3);
+  assert.deepEqual(sleeps, [1, 2]);
 });

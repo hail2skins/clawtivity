@@ -7,11 +7,9 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "skillPath": { "type": "string" },
       "apiUrl": { "type": "string" },
       "projectTag": { "type": "string" },
-      "userId": { "type": "string" },
-      "freshnessMs": { "type": "integer", "minimum": 1000, "maximum": 600000 }
+      "userId": { "type": "string" }
     }
   }
 }

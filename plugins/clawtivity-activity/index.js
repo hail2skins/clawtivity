@@ -1,9 +1,8 @@
-const { spawn } = require('node:child_process');
-const os = require('node:os');
 const path = require('node:path');
-const fs = require('node:fs');
 
 const DEFAULT_FRESHNESS_MS = 60_000;
+const DEFAULT_BACKOFF_MS = [1000, 2000, 4000];
+const DEFAULT_API_URL = 'http://localhost:18730/api/activity';
 
 function nowIso() {
   return new Date().toISOString();
@@ -157,71 +156,68 @@ function extractAssistantText(messages) {
   return '';
 }
 
-function resolveSkillPath(pluginConfig) {
-  return asString(
-    pluginConfig && pluginConfig.skillPath,
-    path.join(os.homedir(), '.openclaw', 'skills', 'clawtivity', 'scripts', 'log_activity.py')
-  );
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function getPythonCandidates() {
-  return ['python3', '/usr/bin/python3', '/opt/homebrew/bin/python3'];
-}
+async function postJson(url, payload) {
+  if (typeof fetch !== 'function') {
+    throw new Error('fetch is unavailable in this runtime');
+  }
 
-function appendPluginError(line) {
-  try {
-    const dir = path.join(os.homedir(), '.clawtivity');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(path.join(dir, 'plugin-errors.log'), `${new Date().toISOString()} ${line}\n`, 'utf8');
-  } catch (_) {
-    // best effort only
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
   }
 }
 
-function runSkill(pythonBin, skillPath, apiUrl, payload) {
-  return new Promise((resolve, reject) => {
-    const args = [skillPath];
-    if (apiUrl) args.push('--api-url', apiUrl);
+async function postWithRetry(options = {}) {
+  const {
+    payload,
+    apiUrl = DEFAULT_API_URL,
+    postJson: postJsonImpl = postJson,
+    backoffsMs = DEFAULT_BACKOFF_MS,
+    sleep: sleepImpl = sleep,
+    logger,
+  } = options;
 
-    const child = spawn(pythonBin, args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
-    });
-
-    let stderr = '';
-    child.stderr.on('data', (chunk) => {
-      stderr += String(chunk);
-    });
-
-    child.on('error', (err) => reject(err));
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new Error(`${pythonBin} exited ${code}: ${stderr.trim()}`));
-    });
-
-    child.stdin.write(JSON.stringify(payload));
-    child.stdin.end();
-  });
-}
-
-async function sendToSkill(skillPath, apiUrl, payload, logger) {
   let lastError;
-  for (const pythonBin of getPythonCandidates()) {
+  for (let i = 0; i < backoffsMs.length; i += 1) {
     try {
-      await runSkill(pythonBin, skillPath, apiUrl, payload);
-      return;
+      await postJsonImpl(apiUrl, payload);
+      return true;
     } catch (err) {
       lastError = err;
+      if (i < backoffsMs.length - 1) {
+        await sleepImpl(backoffsMs[i]);
+      }
     }
   }
 
-  const errorMessage = `[clawtivity-activity] failed to dispatch payload: ${String(lastError)}`;
-  appendPluginError(errorMessage);
   if (logger && typeof logger.warn === 'function') {
-    logger.warn(errorMessage);
+    logger.warn(`[clawtivity-activity] failed after retries: ${String(lastError)}`);
+  }
+  return false;
+}
+
+function resolveApiUrl(pluginConfig) {
+  return asString(pluginConfig && pluginConfig.apiUrl, DEFAULT_API_URL);
+}
+
+async function sendToApi(payload, options = {}) {
+  const {
+    apiUrl = DEFAULT_API_URL,
+    logger,
+  } = options;
+
+  const ok = await postWithRetry({ payload, apiUrl, logger });
+  if (!ok && logger && typeof logger.warn === 'function') {
+    logger.warn('[clawtivity-activity] payload dropped after retries');
   }
 }
 
@@ -232,8 +228,7 @@ module.exports = {
   version: '0.1.0',
   register(api) {
     const pluginConfig = (api && api.pluginConfig) || {};
-    const skillPath = resolveSkillPath(pluginConfig);
-    const apiUrl = asString(pluginConfig.apiUrl, '');
+    const apiUrl = resolveApiUrl(pluginConfig);
     const configuredProjectTag = asString(pluginConfig.projectTag, '');
     const configuredUserId = asString(pluginConfig.userId, '');
 
@@ -307,7 +302,7 @@ module.exports = {
 
       // Touch assistant content so future enhancements can include it.
       extractAssistantText(event && event.messages);
-      return sendToSkill(skillPath, apiUrl, payload, api.logger);
+      return sendToApi(payload, { apiUrl, logger: api.logger });
     });
   },
 
@@ -319,5 +314,5 @@ module.exports = {
   channelKeyFromContext,
   extractUsage,
   statusFromSuccess,
-  getPythonCandidates,
+  postWithRetry,
 };
