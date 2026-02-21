@@ -126,13 +126,23 @@ Install and enable (hardened allowlist security):
 ```bash
 cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.codex
 tmp="$HOME/.openclaw/openclaw.json.tmp.codex"
-jq '.plugins.allow = ((.plugins.allow // []) + ["clawtivity-activity","memory-core","discord","telegram"] | unique)' \
+jq '
+  .plugins = (.plugins // {}) |
+  .plugins.allow = ((.plugins.allow // []) + ["clawtivity-activity","memory-core","discord","telegram"] | unique)
+' \
   "$HOME/.openclaw/openclaw.json" > "$tmp" && mv "$tmp" "$HOME/.openclaw/openclaw.json"
 
 openclaw plugins install ./plugins/clawtivity-activity
 openclaw plugins enable clawtivity-activity
 openclaw gateway restart
 openclaw plugins list --json | jq '.plugins[] | {id,enabled,status,error} | select(.id=="clawtivity-activity" or .id=="memory-core" or .id=="discord" or .id=="telegram")'
+```
+
+If `openclaw gateway restart` says `Gateway service not loaded`, initialize it once:
+
+```bash
+openclaw gateway install
+openclaw gateway start
 ```
 
 Behavior:
@@ -203,7 +213,10 @@ If plugin is installed/enabled but shows `not in allowlist`:
 ```bash
 cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.codex
 tmp="$HOME/.openclaw/openclaw.json.tmp.codex"
-jq '.plugins.allow = ((.plugins.allow // []) + ["clawtivity-activity","memory-core","discord","telegram"] | unique)' \
+jq '
+  .plugins = (.plugins // {}) |
+  .plugins.allow = ((.plugins.allow // []) + ["clawtivity-activity","memory-core","discord","telegram"] | unique)
+' \
   "$HOME/.openclaw/openclaw.json" > "$tmp" && mv "$tmp" "$HOME/.openclaw/openclaw.json"
 openclaw gateway restart
 ```
