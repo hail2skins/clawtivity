@@ -102,3 +102,17 @@ func TestClassifySingleKeywordFallsBackToGeneral(t *testing.T) {
 		t.Fatal("expected reason")
 	}
 }
+
+func TestClassifyOpenClawReleasePromptMapsToAdmin(t *testing.T) {
+	gotCategory, gotReason := Classify(Signals{
+		PromptText:    "OpenClaw update: check release docs for Discord /vc and tell me what we can do",
+		AssistantText: "I reviewed the release notes and Discord feature details",
+	})
+
+	if gotCategory != "admin" {
+		t.Fatalf("expected admin, got %q", gotCategory)
+	}
+	if gotReason == "" {
+		t.Fatal("expected reason")
+	}
+}

@@ -2,7 +2,7 @@
   "default_category": "general",
   "categories": {
     "admin": {
-      "keywords": ["admin", "upgrade", "install", "plugin", "skill", "config", "version", "settings"],
+      "keywords": ["admin", "upgrade", "update", "install", "plugin", "skill", "config", "version", "settings", "release", "docs", "documentation", "discord"],
       "tools": ["openclaw", "config", "install", "upgrade"]
     },
     "code": {
