@@ -125,15 +125,15 @@ Install and enable (hardened allowlist security):
 
 ```bash
 cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.codex
+openclaw plugins install ./plugins/clawtivity-activity
+openclaw plugins enable clawtivity-activity
+
 tmp="$HOME/.openclaw/openclaw.json.tmp.codex"
 jq '
   .plugins = (.plugins // {}) |
   .plugins.allow = ((.plugins.allow // []) + ["clawtivity-activity","memory-core","discord","telegram"] | unique)
-' \
-  "$HOME/.openclaw/openclaw.json" > "$tmp" && mv "$tmp" "$HOME/.openclaw/openclaw.json"
+' "$HOME/.openclaw/openclaw.json" > "$tmp" && mv "$tmp" "$HOME/.openclaw/openclaw.json"
 
-openclaw plugins install ./plugins/clawtivity-activity
-openclaw plugins enable clawtivity-activity
 openclaw gateway restart
 openclaw plugins list --json | jq '.plugins[] | {id,enabled,status,error} | select(.id=="clawtivity-activity" or .id=="memory-core" or .id=="discord" or .id=="telegram")'
 ```
@@ -218,6 +218,30 @@ jq '
   .plugins.allow = ((.plugins.allow // []) + ["clawtivity-activity","memory-core","discord","telegram"] | unique)
 ' \
   "$HOME/.openclaw/openclaw.json" > "$tmp" && mv "$tmp" "$HOME/.openclaw/openclaw.json"
+openclaw gateway restart
+```
+
+If OpenClaw fails with:
+`Invalid config ... plugins.allow: plugin not found: clawtivity-activity`
+
+This means the plugin is currently not installed but still listed in `plugins.allow`.
+Recover with:
+
+```bash
+cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.codex
+tmp="$HOME/.openclaw/openclaw.json.tmp.codex"
+jq '.plugins = (.plugins // {}) | .plugins.allow = ((.plugins.allow // []) | map(select(. != "clawtivity-activity")))' \
+  "$HOME/.openclaw/openclaw.json" > "$tmp" && mv "$tmp" "$HOME/.openclaw/openclaw.json"
+
+openclaw plugins install ./plugins/clawtivity-activity
+openclaw plugins enable clawtivity-activity
+
+tmp="$HOME/.openclaw/openclaw.json.tmp.codex"
+jq '
+  .plugins = (.plugins // {}) |
+  .plugins.allow = ((.plugins.allow // []) + ["clawtivity-activity","memory-core","discord","telegram"] | unique)
+' "$HOME/.openclaw/openclaw.json" > "$tmp" && mv "$tmp" "$HOME/.openclaw/openclaw.json"
+
 openclaw gateway restart
 ```
 
