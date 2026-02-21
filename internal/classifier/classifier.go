@@ -54,12 +54,16 @@ func Classify(s Signals) (string, string) {
 		return category, fmt.Sprintf("explicit_override:category=%s", category)
 	}
 
+	if category, score, ok := detectKeywordScore(strings.ToLower(s.PromptText)); ok {
+		return category, fmt.Sprintf("prompt_keyword_score:%s=%d", category, score)
+	}
+
 	if category, toolName, ok := detectToolSignal(s); ok {
 		return category, fmt.Sprintf("tool_signal:%s", toolName)
 	}
 
-	if category, score, ok := detectKeywordScore(s); ok {
-		return category, fmt.Sprintf("keyword_score:%s=%d", category, score)
+	if category, score, ok := detectKeywordScore(strings.ToLower(s.AssistantText)); ok {
+		return category, fmt.Sprintf("assistant_keyword_score:%s=%d", category, score)
 	}
 
 	return loadedRules.DefaultCategory, "fallback:insufficient_signals"
@@ -108,8 +112,7 @@ func detectToolSignal(s Signals) (string, string, bool) {
 	return "", "", false
 }
 
-func detectKeywordScore(s Signals) (string, int, bool) {
-	text := strings.ToLower(s.PromptText + "\n" + s.AssistantText)
+func detectKeywordScore(text string) (string, int, bool) {
 	if strings.TrimSpace(text) == "" {
 		return "", 0, false
 	}

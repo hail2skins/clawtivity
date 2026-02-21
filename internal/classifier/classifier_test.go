@@ -17,15 +17,15 @@ func TestClassifyExplicitOverrideWins(t *testing.T) {
 	}
 }
 
-func TestClassifyToolSignalBeatsKeywords(t *testing.T) {
+func TestClassifyPromptKeywordsBeatToolSignal(t *testing.T) {
 	gotCategory, gotReason := Classify(Signals{
 		PromptText:    "please research this",
 		AssistantText: "",
 		ToolsUsed:     []string{"write_file"},
 	})
 
-	if gotCategory != "code" {
-		t.Fatalf("expected code from tool signal, got %q", gotCategory)
+	if gotCategory != "research" {
+		t.Fatalf("expected research from prompt intent, got %q", gotCategory)
 	}
 	if gotReason == "" {
 		t.Fatal("expected reason")
@@ -40,6 +40,21 @@ func TestClassifyKeywordScore(t *testing.T) {
 
 	if gotCategory != "automation" {
 		t.Fatalf("expected automation, got %q", gotCategory)
+	}
+	if gotReason == "" {
+		t.Fatal("expected reason")
+	}
+}
+
+func TestClassifyToolSignalBeatsAssistantKeywordsWhenPromptIsNeutral(t *testing.T) {
+	gotCategory, gotReason := Classify(Signals{
+		PromptText:    "please take a look",
+		AssistantText: "here is research and findings",
+		ToolsUsed:     []string{"write_file"},
+	})
+
+	if gotCategory != "code" {
+		t.Fatalf("expected code from tool signal, got %q", gotCategory)
 	}
 	if gotReason == "" {
 		t.Fatal("expected reason")
