@@ -112,13 +112,27 @@ Repository source:
 - `plugins/clawtivity-activity/openclaw.plugin.json`
 - `plugins/clawtivity-activity/index.js`
 
-Install and enable:
+Install and enable (default OpenClaw security):
 
 ```bash
 openclaw plugins install ./plugins/clawtivity-activity
 openclaw plugins enable clawtivity-activity
 openclaw gateway restart
 openclaw plugins list --json
+```
+
+Install and enable (hardened allowlist security):
+
+```bash
+cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.codex
+tmp="$HOME/.openclaw/openclaw.json.tmp.codex"
+jq '.plugins.allow = ((.plugins.allow // []) + ["clawtivity-activity","memory-core","discord","telegram"] | unique)' \
+  "$HOME/.openclaw/openclaw.json" > "$tmp" && mv "$tmp" "$HOME/.openclaw/openclaw.json"
+
+openclaw plugins install ./plugins/clawtivity-activity
+openclaw plugins enable clawtivity-activity
+openclaw gateway restart
+openclaw plugins list --json | jq '.plugins[] | {id,enabled,status,error} | select(.id=="clawtivity-activity" or .id=="memory-core" or .id=="discord" or .id=="telegram")'
 ```
 
 Behavior:
@@ -182,6 +196,16 @@ printf 'y\n' | openclaw plugins uninstall clawtivity-activity
 rm -rf ~/.openclaw/extensions/clawtivity-activity
 openclaw plugins install ./plugins/clawtivity-activity
 openclaw plugins enable clawtivity-activity
+```
+
+If plugin is installed/enabled but shows `not in allowlist`:
+
+```bash
+cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.codex
+tmp="$HOME/.openclaw/openclaw.json.tmp.codex"
+jq '.plugins.allow = ((.plugins.allow // []) + ["clawtivity-activity","memory-core","discord","telegram"] | unique)' \
+  "$HOME/.openclaw/openclaw.json" > "$tmp" && mv "$tmp" "$HOME/.openclaw/openclaw.json"
+openclaw gateway restart
 ```
 
 ## Data Model Snapshot
