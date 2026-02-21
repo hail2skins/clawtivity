@@ -27,6 +27,135 @@ function asString(value, fallback = '') {
   return fallback;
 }
 
+function asBool(value, fallback = undefined) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === '') return fallback;
+    if (['true', '1', 'yes', 'on', 'enabled'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'off', 'disabled'].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
+function getByPath(source, dottedPath) {
+  if (!source || typeof source !== 'object') return undefined;
+  const parts = dottedPath.split('.');
+  let current = source;
+  for (const part of parts) {
+    if (!current || typeof current !== 'object' || !(part in current)) {
+      return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+}
+
+function firstDefined(source, paths) {
+  for (const p of paths) {
+    const value = getByPath(source, p);
+    if (value !== undefined && value !== null) return value;
+  }
+  return undefined;
+}
+
+function normalizeThinking(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value <= 1) return 'low';
+    if (value >= 3) return 'high';
+    return 'medium';
+  }
+
+  const normalized = asString(value, '').toLowerCase();
+  if (!normalized) return '';
+  if (normalized === 'low') return 'low';
+  if (normalized === 'medium') return 'medium';
+  if (normalized === 'high') return 'high';
+  if (['minimal', 'min', 'none', 'off'].includes(normalized)) return 'low';
+  if (['default', 'normal', 'std'].includes(normalized)) return 'medium';
+  if (normalized.includes('high')) return 'high';
+  if (normalized.includes('med')) return 'medium';
+  if (normalized.includes('low')) return 'low';
+  return '';
+}
+
+function extractCognition(event, ctx, prior = {}) {
+  const thinkingFromEvent = normalizeThinking(firstDefined(event, [
+    'thinking',
+    'thinkingLevel',
+    'reasoningEffort',
+    'reasoning.effort',
+    'reasoning.level',
+    'settings.reasoningEffort',
+    'metadata.thinking',
+    'metadata.reasoningEffort',
+    'config.reasoningEffort',
+    'options.reasoningEffort',
+  ]));
+  const thinkingFromCtx = normalizeThinking(firstDefined(ctx, [
+    'thinking',
+    'thinkingLevel',
+    'reasoningEffort',
+    'reasoning.effort',
+    'settings.reasoningEffort',
+    'metadata.thinking',
+    'metadata.reasoningEffort',
+    'modelSettings.reasoningEffort',
+    'session.modelSettings.reasoningEffort',
+  ]));
+  const priorThinking = normalizeThinking(prior && prior.thinking);
+  const thinking = thinkingFromEvent || thinkingFromCtx || priorThinking || 'low';
+
+  const explicitReasoning = asBool(
+    firstDefined(event, [
+      'reasoning',
+      'reasoning.enabled',
+      'reasoningEnabled',
+      'settings.reasoning',
+      'settings.reasoningEnabled',
+      'metadata.reasoning',
+      'config.reasoning',
+      'options.reasoning',
+      'options.reasoningEnabled',
+    ]),
+    undefined,
+  );
+  const explicitReasoningCtx = asBool(
+    firstDefined(ctx, [
+      'reasoning',
+      'reasoning.enabled',
+      'reasoningEnabled',
+      'settings.reasoning',
+      'settings.reasoningEnabled',
+      'metadata.reasoning',
+      'modelSettings.reasoning',
+      'modelSettings.reasoningEnabled',
+      'session.modelSettings.reasoning',
+      'session.modelSettings.reasoningEnabled',
+    ]),
+    undefined,
+  );
+  const reasoningTokens = asInt(firstDefined(event, [
+    'usage.reasoning_tokens',
+    'usage.reasoningTokens',
+    'result.usage.reasoning_tokens',
+    'result.usage.reasoningTokens',
+  ]), 0);
+
+  const priorReasoning = asBool(prior && prior.reasoning, false);
+  let reasoning = explicitReasoning;
+  if (reasoning === undefined) reasoning = explicitReasoningCtx;
+  if (reasoning === undefined) reasoning = reasoningTokens > 0 ? true : undefined;
+  if (reasoning === undefined && thinking !== 'low') reasoning = true;
+  if (reasoning === undefined) reasoning = priorReasoning;
+
+  return {
+    thinking,
+    reasoning: Boolean(reasoning),
+  };
+}
+
 function shouldUseRecent(recent, now = Date.now(), freshnessMs = DEFAULT_FRESHNESS_MS) {
   if (!recent || typeof recent !== 'object') return false;
   if (!Number.isFinite(recent.ts)) return false;
@@ -92,6 +221,10 @@ function coalesceSnapshot(params) {
 
   const currentModel = asString(safeCurrent.model, 'unknown-model');
   const priorModel = asString(safePrior.model, 'unknown-model');
+  const currentThinking = normalizeThinking(safeCurrent.thinking);
+  const priorThinking = normalizeThinking(safePrior.thinking);
+  const currentReasoning = asBool(safeCurrent.reasoning, undefined);
+  const priorReasoning = asBool(safePrior.reasoning, false);
 
   return {
     ts: Date.now(),
@@ -100,6 +233,8 @@ function coalesceSnapshot(params) {
     tokensIn: Math.max(asInt(safeCurrent.tokensIn, 0), asInt(safePrior.tokensIn, 0)),
     tokensOut: Math.max(asInt(safeCurrent.tokensOut, 0), asInt(safePrior.tokensOut, 0)),
     durationMs: Math.max(asInt(safeCurrent.durationMs, 0), asInt(safePrior.durationMs, 0)),
+    thinking: currentThinking || priorThinking || 'low',
+    reasoning: currentReasoning === undefined ? priorReasoning : currentReasoning,
     projectTag: asString(safeCurrent.projectTag, asString(safePrior.projectTag, path.basename(process.cwd()))),
     userId: asString(safeCurrent.userId, asString(safePrior.userId, 'unknown-user')),
   };
@@ -124,6 +259,8 @@ function buildActivityPayload(params) {
     toolsUsed,
     promptText,
     assistantText,
+    thinking,
+    reasoning,
     nowIso: nowValue,
     fallbackSessionSeed,
   } = params;
@@ -142,8 +279,8 @@ function buildActivityPayload(params) {
     project_tag: asString(projectTag, 'unknown-project'),
     external_ref: '',
     category: 'general',
-    thinking: 'medium',
-    reasoning: false,
+    thinking: normalizeThinking(thinking) || 'low',
+    reasoning: asBool(reasoning, false),
     channel: normalizedChannel,
     status: asString(status, 'success'),
     user_id: asString(userId, 'unknown-user'),
@@ -372,6 +509,7 @@ module.exports = {
       const sessionKey = asString(sessionKeyFromContext(ctx), sessionKeyFromEvent(event));
       if (!sessionKey) return;
       const usage = extractUsage(event);
+      const cognition = extractCognition(event, ctx, recentBySession.get(sessionKey));
 
       const snapshot = coalesceSnapshot({
         prior: recentBySession.get(sessionKey),
@@ -382,6 +520,8 @@ module.exports = {
           tokensIn: usage.tokensIn,
           tokensOut: usage.tokensOut,
           durationMs: asInt(event && event.durationMs, 0),
+          thinking: cognition.thinking,
+          reasoning: cognition.reasoning,
           projectTag: configuredProjectTag || path.basename(asString(ctx && ctx.workspaceDir, process.cwd())),
           userId: configuredUserId || userByChannel.get(channel) || 'unknown-user',
         },
@@ -414,6 +554,7 @@ module.exports = {
       const recentChannel = recentByChannel.get(channel);
       const recent = recentSession || recentChannel || null;
       const usage = extractUsage(event);
+      const cognition = extractCognition(event, ctx, recent);
       const current = coalesceSnapshot({
         prior: recent,
         current: {
@@ -423,6 +564,8 @@ module.exports = {
           tokensIn: usage.tokensIn,
           tokensOut: usage.tokensOut,
           durationMs: asInt(event && event.durationMs, 0),
+          thinking: cognition.thinking,
+          reasoning: cognition.reasoning,
           projectTag: configuredProjectTag || path.basename(asString(ctx && ctx.workspaceDir, process.cwd())),
           userId: configuredUserId || userByChannel.get(channel) || 'unknown-user',
         },
@@ -464,6 +607,8 @@ module.exports = {
         toolsUsed: [],
         promptText,
         assistantText,
+        thinking: settled.thinking,
+        reasoning: settled.reasoning,
         nowIso: nowIso(),
         fallbackSessionSeed: `agent-end:${channel}:${Date.now()}`,
       });
@@ -480,6 +625,7 @@ module.exports = {
   extractUserText,
   channelKeyFromContext,
   extractUsage,
+  extractCognition,
   coalesceSnapshot,
   settleSnapshot,
   statusFromSuccess,

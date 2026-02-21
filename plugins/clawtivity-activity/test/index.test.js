@@ -10,6 +10,7 @@ const {
   shouldUseRecent,
   channelKeyFromContext,
   extractUsage,
+  extractCognition,
   statusFromSuccess,
   coalesceSnapshot,
   settleSnapshot,
@@ -97,6 +98,27 @@ test('buildActivityPayload carries text signals for classifier', () => {
   assert.equal(payload.assistant_text, 'here are the findings');
 });
 
+test('buildActivityPayload carries thinking and reasoning fields', () => {
+  const payload = buildActivityPayload({
+    sessionKey: 's-2',
+    model: 'gpt-5',
+    tokensIn: 1,
+    tokensOut: 1,
+    durationMs: 10,
+    projectTag: 'clawtivity',
+    channel: 'webchat',
+    userId: 'u-1',
+    status: 'success',
+    toolsUsed: [],
+    thinking: 'high',
+    reasoning: true,
+    nowIso: '2026-02-18T00:00:00Z',
+  });
+
+  assert.equal(payload.thinking, 'high');
+  assert.equal(payload.reasoning, true);
+});
+
 test('plugin package metadata exists for openclaw install', () => {
   const pkgPath = path.join(__dirname, '..', 'package.json');
   const raw = fs.readFileSync(pkgPath, 'utf8');
@@ -141,6 +163,28 @@ test('extractUsage supports multiple event usage shapes', () => {
   );
 });
 
+test('extractCognition resolves explicit reasoning fields', () => {
+  const got = extractCognition(
+    {
+      reasoning: {
+        enabled: true,
+        effort: 'high',
+      },
+    },
+    {},
+    {},
+  );
+
+  assert.equal(got.thinking, 'high');
+  assert.equal(got.reasoning, true);
+});
+
+test('extractCognition falls back to low/false when unknown', () => {
+  const got = extractCognition({}, {}, {});
+  assert.equal(got.thinking, 'low');
+  assert.equal(got.reasoning, false);
+});
+
 test('statusFromSuccess maps booleans to activity status strings', () => {
   assert.equal(statusFromSuccess(true), 'success');
   assert.equal(statusFromSuccess(false), 'failed');
@@ -155,6 +199,8 @@ test('coalesceSnapshot keeps prior model/tokens when current event is empty', ()
       tokensIn: 1200,
       tokensOut: 300,
       durationMs: 0,
+      thinking: 'high',
+      reasoning: true,
       projectTag: 'workspace',
       userId: 'discord:channel:1',
     },
@@ -164,6 +210,7 @@ test('coalesceSnapshot keeps prior model/tokens when current event is empty', ()
       tokensIn: 0,
       tokensOut: 0,
       durationMs: 5000,
+      thinking: '',
       projectTag: 'workspace',
       userId: 'discord:channel:1',
     },
@@ -173,6 +220,8 @@ test('coalesceSnapshot keeps prior model/tokens when current event is empty', ()
   assert.equal(got.tokensIn, 1200);
   assert.equal(got.tokensOut, 300);
   assert.equal(got.durationMs, 5000);
+  assert.equal(got.thinking, 'high');
+  assert.equal(got.reasoning, true);
 });
 
 test('coalesceSnapshot adopts stronger current usage/model values', () => {
