@@ -150,6 +150,13 @@ Queue replay behavior:
 - successfully imported entries are removed from queue files
 - empty queue files are deleted
 
+### Categorization (CLAW-22)
+
+- Activity categorization is rule-based and deterministic.
+- Seed rule file: `internal/classifier/category_rules.json`
+- Default category remains `general`.
+- API classifies from available signals (`prompt_text`, `assistant_text`, `tools_used`) and writes `category_reason` for auditability.
+
 ### Verify Wiring
 
 ```bash
@@ -192,6 +199,7 @@ Fields:
 - `project_tag` (indexed)
 - `external_ref`
 - `category` (indexed)
+- `category_reason`
 - `thinking`
 - `reasoning`
 - `channel`

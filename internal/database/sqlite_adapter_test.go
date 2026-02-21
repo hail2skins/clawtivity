@@ -58,6 +58,7 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 		"project_tag",
 		"external_ref",
 		"category",
+		"category_reason",
 		"thinking",
 		"reasoning",
 		"channel",
@@ -147,19 +148,20 @@ func TestActivityFeedPersistsNewFields(t *testing.T) {
 	svc := adapter.(*service)
 
 	created := ActivityFeed{
-		SessionKey:   "session-456",
-		Model:        "gpt-5",
-		TokensIn:     12,
-		TokensOut:    34,
-		CostEstimate: 0.002,
-		DurationMS:   500,
-		ProjectTag:   "clawtivity",
-		Category:     "research",
-		Thinking:     "medium",
-		Reasoning:    true,
-		Channel:      "webchat",
-		Status:       "in_progress",
-		UserID:       "user-1",
+		SessionKey:     "session-456",
+		Model:          "gpt-5",
+		TokensIn:       12,
+		TokensOut:      34,
+		CostEstimate:   0.002,
+		DurationMS:     500,
+		ProjectTag:     "clawtivity",
+		Category:       "research",
+		CategoryReason: "keyword_score:research=2",
+		Thinking:       "medium",
+		Reasoning:      true,
+		Channel:        "webchat",
+		Status:         "in_progress",
+		UserID:         "user-1",
 	}
 
 	if err := svc.db.Create(&created).Error; err != nil {
@@ -176,6 +178,9 @@ func TestActivityFeedPersistsNewFields(t *testing.T) {
 	}
 	if fetched.Thinking != created.Thinking {
 		t.Fatalf("expected thinking %q, got %q", created.Thinking, fetched.Thinking)
+	}
+	if fetched.CategoryReason != created.CategoryReason {
+		t.Fatalf("expected category_reason %q, got %q", created.CategoryReason, fetched.CategoryReason)
 	}
 	if fetched.Reasoning != created.Reasoning {
 		t.Fatalf("expected reasoning %t, got %t", created.Reasoning, fetched.Reasoning)

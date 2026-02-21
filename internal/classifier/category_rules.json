@@ -1,0 +1,25 @@
+{
+  "default_category": "general",
+  "categories": {
+    "admin": {
+      "keywords": ["admin", "upgrade", "install", "plugin", "skill", "config", "version", "settings"],
+      "tools": ["openclaw", "config", "install", "upgrade"]
+    },
+    "code": {
+      "keywords": ["code", "implement", "refactor", "bug", "fix", "test", "compile", "build", "patch"],
+      "tools": ["write_file", "edit_file", "patch", "bash", "go", "pytest", "npm", "git"]
+    },
+    "research": {
+      "keywords": ["research", "investigate", "compare", "analysis", "findings", "study", "evaluate"],
+      "tools": ["search", "web", "browse", "fetch"]
+    },
+    "automation": {
+      "keywords": ["automation", "automate", "jira", "ticket", "email", "cron", "schedule", "workflow"],
+      "tools": ["jira", "cron", "scheduler", "email", "calendar"]
+    },
+    "general": {
+      "keywords": [],
+      "tools": []
+    }
+  }
+}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"clawtivity/internal/classifier"
 	"clawtivity/internal/database"
 	"github.com/gin-gonic/gin"
 )
@@ -24,21 +25,27 @@ type APIError struct {
 // @Failure 500 {object} APIError
 // @Router /api/activity [post]
 func (s *Server) createActivityHandler(c *gin.Context) {
-	var input database.ActivityFeed
+	var input activityIngest
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Always generate a fresh ID server-side.
-	input.ID = ""
+	input.ActivityFeed.ID = ""
+	normalizeActivity(&input.ActivityFeed)
+	applyActivityClassification(&input.ActivityFeed, classifier.Signals{
+		PromptText:    input.PromptText,
+		AssistantText: input.AssistantText,
+		ToolsUsed:     input.ToolsUsed,
+	})
 
-	if err := s.db.CreateActivity(c.Request.Context(), &input); err != nil {
+	if err := s.db.CreateActivity(c.Request.Context(), &input.ActivityFeed); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create activity"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, input)
+	c.JSON(http.StatusCreated, input.ActivityFeed)
 }
 
 // listActivitiesHandler godoc

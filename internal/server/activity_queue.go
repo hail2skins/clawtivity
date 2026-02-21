@@ -8,17 +8,17 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
+	"clawtivity/internal/classifier"
 	"clawtivity/internal/database"
 )
 
 var queueJSONFencePattern = regexp.MustCompile("(?s)```json\\n(.*?)\\n```")
 
 type queuedEntry struct {
-	rawJSON  string
-	activity database.ActivityFeed
-	valid    bool
+	rawJSON string
+	ingest  activityIngest
+	valid   bool
 }
 
 func resolveQueueDir() string {
@@ -80,7 +80,13 @@ func flushQueuedActivities(ctx context.Context, db database.Service, queueDir st
 				remaining = append(remaining, entry)
 				continue
 			}
-			activity := normalizeQueuedActivity(entry.activity)
+			activity := entry.ingest.ActivityFeed
+			normalizeActivity(&activity)
+			applyActivityClassification(&activity, classifier.Signals{
+				PromptText:    entry.ingest.PromptText,
+				AssistantText: entry.ingest.AssistantText,
+				ToolsUsed:     entry.ingest.ToolsUsed,
+			})
 			if err := db.CreateActivity(ctx, &activity); err != nil {
 				remaining = append(remaining, entry)
 				continue
@@ -109,44 +115,16 @@ func parseQueueEntries(markdown string) []queuedEntry {
 			continue
 		}
 
-		var activity database.ActivityFeed
-		if err := json.Unmarshal([]byte(raw), &activity); err != nil {
+		var ingest activityIngest
+		if err := json.Unmarshal([]byte(raw), &ingest); err != nil {
 			entries = append(entries, queuedEntry{rawJSON: raw, valid: false})
 			continue
 		}
 
-		entries = append(entries, queuedEntry{rawJSON: raw, activity: activity, valid: true})
+		entries = append(entries, queuedEntry{rawJSON: raw, ingest: ingest, valid: true})
 	}
 
 	return entries
-}
-
-func normalizeQueuedActivity(activity database.ActivityFeed) database.ActivityFeed {
-	if strings.TrimSpace(activity.ProjectTag) == "" {
-		activity.ProjectTag = "unknown-project"
-	}
-	if strings.TrimSpace(activity.Channel) == "" {
-		activity.Channel = "unknown-channel"
-	}
-	if strings.TrimSpace(activity.UserID) == "" {
-		activity.UserID = "unknown-user"
-	}
-	if strings.TrimSpace(activity.Model) == "" {
-		activity.Model = "unknown-model"
-	}
-	if strings.TrimSpace(activity.Category) == "" {
-		activity.Category = "general"
-	}
-	if strings.TrimSpace(activity.Thinking) == "" {
-		activity.Thinking = "medium"
-	}
-	if strings.TrimSpace(activity.Status) == "" {
-		activity.Status = "success"
-	}
-	if activity.CreatedAt.IsZero() {
-		activity.CreatedAt = time.Now().UTC()
-	}
-	return activity
 }
 
 func writeQueueEntries(filePath string, entries []queuedEntry) error {

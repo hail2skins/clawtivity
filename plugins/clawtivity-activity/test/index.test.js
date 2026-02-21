@@ -74,6 +74,27 @@ test('buildActivityPayload produces fallback session key when recent context abs
   assert.equal(payload.created_at, '2026-02-18T00:00:00Z');
 });
 
+test('buildActivityPayload carries text signals for classifier', () => {
+  const payload = buildActivityPayload({
+    sessionKey: 's-1',
+    model: 'gpt-5',
+    tokensIn: 1,
+    tokensOut: 1,
+    durationMs: 10,
+    projectTag: 'clawtivity',
+    channel: 'webchat',
+    userId: 'u-1',
+    status: 'success',
+    toolsUsed: [],
+    promptText: 'please research options',
+    assistantText: 'here are the findings',
+    nowIso: '2026-02-18T00:00:00Z',
+  });
+
+  assert.equal(payload.prompt_text, 'please research options');
+  assert.equal(payload.assistant_text, 'here are the findings');
+});
+
 test('plugin package metadata exists for openclaw install', () => {
   const pkgPath = path.join(__dirname, '..', 'package.json');
   const raw = fs.readFileSync(pkgPath, 'utf8');

@@ -81,6 +81,8 @@ function buildActivityPayload(params) {
     userId,
     status,
     toolsUsed,
+    promptText,
+    assistantText,
     nowIso: nowValue,
     fallbackSessionSeed,
   } = params;
@@ -105,6 +107,8 @@ function buildActivityPayload(params) {
     status: asString(status, 'success'),
     user_id: asString(userId, 'unknown-user'),
     tools_used: Array.isArray(toolsUsed) ? toolsUsed : [],
+    prompt_text: asString(promptText, ''),
+    assistant_text: asString(assistantText, ''),
     created_at: asString(nowValue, nowIso())
   };
 }
@@ -148,6 +152,24 @@ function extractAssistantText(messages) {
     if (!entry || typeof entry !== 'object') continue;
     const role = asString(entry.role, '');
     if (role !== 'assistant') continue;
+    if (typeof entry.content === 'string' && entry.content.trim() !== '') {
+      return entry.content;
+    }
+    if (Array.isArray(entry.content)) {
+      const textChunk = entry.content.find((c) => c && typeof c === 'object' && c.type === 'text' && typeof c.text === 'string');
+      if (textChunk && textChunk.text.trim() !== '') return textChunk.text;
+    }
+  }
+  return '';
+}
+
+function extractUserText(messages) {
+  if (!Array.isArray(messages)) return '';
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const entry = messages[i];
+    if (!entry || typeof entry !== 'object') continue;
+    const role = asString(entry.role, '');
+    if (role !== 'user') continue;
     if (typeof entry.content === 'string' && entry.content.trim() !== '') {
       return entry.content;
     }
@@ -322,6 +344,8 @@ module.exports = {
       current.ts = Date.now();
       recentByChannel.set(channel, current);
 
+      const promptText = extractUserText(event && event.messages);
+      const assistantText = extractAssistantText(event && event.messages);
       const payload = buildActivityPayload({
         sessionKey: current.sessionKey,
         model: current.model,
@@ -333,12 +357,12 @@ module.exports = {
         userId: configuredUserId || userByChannel.get(channel) || current.userId,
         status: statusFromSuccess(event && event.success),
         toolsUsed: [],
+        promptText,
+        assistantText,
         nowIso: nowIso(),
         fallbackSessionSeed: `agent-end:${channel}:${Date.now()}`,
       });
 
-      // Touch assistant content so future enhancements can include it.
-      extractAssistantText(event && event.messages);
       return sendToApi(payload, { apiUrl, queueRoot, logger: api.logger });
     });
   },
@@ -348,6 +372,7 @@ module.exports = {
   mergeRecentByChannel,
   shouldUseRecent,
   extractAssistantText,
+  extractUserText,
   channelKeyFromContext,
   extractUsage,
   statusFromSuccess,

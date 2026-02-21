@@ -21,22 +21,23 @@ var ErrInvalidDateFilter = errors.New("invalid date filter: expected YYYY-MM-DD"
 
 // ActivityFeed is the local-first event ledger entry.
 type ActivityFeed struct {
-	ID           string    `gorm:"type:char(36);primaryKey" json:"id"`
-	SessionKey   string    `gorm:"index:idx_activity_feed_session_key" json:"session_key"`
-	Model        string    `json:"model"`
-	TokensIn     int       `json:"tokens_in"`
-	TokensOut    int       `json:"tokens_out"`
-	CostEstimate float64   `json:"cost_estimate"`
-	DurationMS   int64     `json:"duration_ms"`
-	ProjectTag   string    `gorm:"index:idx_activity_feed_project_tag" json:"project_tag"`
-	ExternalRef  string    `json:"external_ref"`
-	Category     string    `gorm:"index:idx_activity_feed_category" json:"category"`
-	Thinking     string    `json:"thinking"`
-	Reasoning    bool      `json:"reasoning"`
-	Channel      string    `json:"channel"`
-	Status       string    `gorm:"index:idx_activity_feed_status" json:"status"`
-	UserID       string    `gorm:"index:idx_activity_feed_user_id" json:"user_id"`
-	CreatedAt    time.Time `gorm:"autoCreateTime" json:"created_at"`
+	ID             string    `gorm:"type:char(36);primaryKey" json:"id"`
+	SessionKey     string    `gorm:"index:idx_activity_feed_session_key" json:"session_key"`
+	Model          string    `json:"model"`
+	TokensIn       int       `json:"tokens_in"`
+	TokensOut      int       `json:"tokens_out"`
+	CostEstimate   float64   `json:"cost_estimate"`
+	DurationMS     int64     `json:"duration_ms"`
+	ProjectTag     string    `gorm:"index:idx_activity_feed_project_tag" json:"project_tag"`
+	ExternalRef    string    `json:"external_ref"`
+	Category       string    `gorm:"index:idx_activity_feed_category" json:"category"`
+	CategoryReason string    `json:"category_reason"`
+	Thinking       string    `json:"thinking"`
+	Reasoning      bool      `json:"reasoning"`
+	Channel        string    `json:"channel"`
+	Status         string    `gorm:"index:idx_activity_feed_status" json:"status"`
+	UserID         string    `gorm:"index:idx_activity_feed_user_id" json:"user_id"`
+	CreatedAt      time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
 
 func (ActivityFeed) TableName() string {

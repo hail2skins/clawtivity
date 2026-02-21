@@ -23,7 +23,7 @@ func TestFlushQueuedActivitiesImportsAndDeletesProcessedFile(t *testing.T) {
 		"",
 		"## queued_at: 2026-02-19T00:00:00Z",
 		"```json",
-		`{"session_key":"q-1","model":"gpt-5","tokens_in":10,"tokens_out":5,"cost_estimate":0,"duration_ms":100,"project_tag":"clawtivity","external_ref":"","category":"general","thinking":"medium","reasoning":false,"channel":"webchat","status":"success","user_id":"u1","created_at":"2026-02-19T00:00:00Z"}`,
+		`{"session_key":"q-1","model":"gpt-5","tokens_in":10,"tokens_out":5,"cost_estimate":0,"duration_ms":100,"project_tag":"clawtivity","external_ref":"","category":"general","thinking":"medium","reasoning":false,"channel":"webchat","status":"success","user_id":"u1","prompt_text":"please implement code changes and run tests","assistant_text":"implemented code and tests","created_at":"2026-02-19T00:00:00Z"}`,
 		"```",
 		"",
 	}, "\n")
@@ -48,6 +48,12 @@ func TestFlushQueuedActivitiesImportsAndDeletesProcessedFile(t *testing.T) {
 	}
 	if activities[0].SessionKey != "q-1" {
 		t.Fatalf("expected session q-1, got %q", activities[0].SessionKey)
+	}
+	if activities[0].Category != "code" {
+		t.Fatalf("expected category code, got %q", activities[0].Category)
+	}
+	if activities[0].CategoryReason == "" {
+		t.Fatal("expected category_reason to be populated")
 	}
 
 	files, err := filepath.Glob(filepath.Join(queueRoot, "*.md"))

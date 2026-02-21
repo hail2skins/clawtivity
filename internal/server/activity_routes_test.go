@@ -52,6 +52,44 @@ func TestPostActivityCreatesEntry(t *testing.T) {
 	}
 }
 
+func TestPostActivityAutoCategorizesAndSetsReason(t *testing.T) {
+	handler, cleanup := newTestHandler(t)
+	defer cleanup()
+
+	payload := map[string]any{
+		"session_key":    "session-cat-1",
+		"model":          "gpt-5",
+		"tokens_in":      50,
+		"tokens_out":     12,
+		"cost_estimate":  0.0,
+		"duration_ms":    int64(1200),
+		"project_tag":    "proj-alpha",
+		"external_ref":   "",
+		"channel":        "webchat",
+		"status":         "success",
+		"user_id":        "art",
+		"prompt_text":    "Please research the best options and compare tradeoffs",
+		"assistant_text": "Here is the research summary and findings.",
+	}
+
+	rr := performJSON(t, handler, http.MethodPost, "/api/activity", payload)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, rr.Code, rr.Body.String())
+	}
+
+	var got database.ActivityFeed
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("expected valid json response: %v", err)
+	}
+
+	if got.Category != "research" {
+		t.Fatalf("expected category research, got %q", got.Category)
+	}
+	if got.CategoryReason == "" {
+		t.Fatal("expected category_reason to be populated")
+	}
+}
+
 func TestGetActivitySupportsProjectModelDateFilters(t *testing.T) {
 	handler, cleanup := newTestHandler(t)
 	defer cleanup()

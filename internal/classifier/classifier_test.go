@@ -1,0 +1,61 @@
+package classifier
+
+import "testing"
+
+func TestClassifyExplicitOverrideWins(t *testing.T) {
+	gotCategory, gotReason := Classify(Signals{
+		PromptText:    "Category: research please handle this",
+		AssistantText: "",
+		ToolsUsed:     nil,
+	})
+
+	if gotCategory != "research" {
+		t.Fatalf("expected research, got %q", gotCategory)
+	}
+	if gotReason == "" {
+		t.Fatal("expected reason")
+	}
+}
+
+func TestClassifyToolSignalBeatsKeywords(t *testing.T) {
+	gotCategory, gotReason := Classify(Signals{
+		PromptText:    "please research this",
+		AssistantText: "",
+		ToolsUsed:     []string{"write_file"},
+	})
+
+	if gotCategory != "code" {
+		t.Fatalf("expected code from tool signal, got %q", gotCategory)
+	}
+	if gotReason == "" {
+		t.Fatal("expected reason")
+	}
+}
+
+func TestClassifyKeywordScore(t *testing.T) {
+	gotCategory, gotReason := Classify(Signals{
+		PromptText:    "open a jira ticket and schedule cron automation",
+		AssistantText: "I will automate this with cron",
+	})
+
+	if gotCategory != "automation" {
+		t.Fatalf("expected automation, got %q", gotCategory)
+	}
+	if gotReason == "" {
+		t.Fatal("expected reason")
+	}
+}
+
+func TestClassifyFallsBackToGeneral(t *testing.T) {
+	gotCategory, gotReason := Classify(Signals{
+		PromptText:    "hello friend",
+		AssistantText: "nice to meet you",
+	})
+
+	if gotCategory != "general" {
+		t.Fatalf("expected general, got %q", gotCategory)
+	}
+	if gotReason == "" {
+		t.Fatal("expected reason")
+	}
+}
