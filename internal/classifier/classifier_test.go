@@ -19,7 +19,7 @@ func TestClassifyExplicitOverrideWins(t *testing.T) {
 
 func TestClassifyPromptKeywordsBeatToolSignal(t *testing.T) {
 	gotCategory, gotReason := Classify(Signals{
-		PromptText:    "please research this",
+		PromptText:    "please research and compare this",
 		AssistantText: "",
 		ToolsUsed:     []string{"write_file"},
 	})
@@ -79,6 +79,20 @@ func TestClassifyDoesNotTreatTestingAsCodeKeyword(t *testing.T) {
 	gotCategory, gotReason := Classify(Signals{
 		PromptText:    "Reply with a simple yes here. Testing.",
 		AssistantText: "Yes",
+	})
+
+	if gotCategory != "general" {
+		t.Fatalf("expected general, got %q", gotCategory)
+	}
+	if gotReason == "" {
+		t.Fatal("expected reason")
+	}
+}
+
+func TestClassifySingleKeywordFallsBackToGeneral(t *testing.T) {
+	gotCategory, gotReason := Classify(Signals{
+		PromptText:    "new test. say hi.",
+		AssistantText: "hi",
 	})
 
 	if gotCategory != "general" {

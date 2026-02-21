@@ -29,6 +29,7 @@ type Signals struct {
 }
 
 var explicitCategoryPattern = regexp.MustCompile(`(?i)category\s*:\s*([a-z_]+)`)
+const minKeywordScore = 2
 
 var loadedRules = mustLoadRules()
 
@@ -157,6 +158,9 @@ func detectKeywordScore(text string) (string, int, bool) {
 	})
 
 	if len(all) > 1 && all[0].score == all[1].score {
+		return "", 0, false
+	}
+	if all[0].score < minKeywordScore {
 		return "", 0, false
 	}
 
