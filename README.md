@@ -268,6 +268,10 @@ Fields:
 - `user_id` (indexed)
 - `created_at`
 
+Field semantics (current):
+- `thinking`: placeholder signal for future provider-specific thinking levels; currently low-confidence.
+- `reasoning`: boolean for reasoning enabled/capable at runtime (`true`/`false`), not a proof that reasoning tokens were used.
+
 ### `turn_memories`
 
 Fields:
