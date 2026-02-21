@@ -80,6 +80,22 @@ function normalizeThinking(value) {
   return '';
 }
 
+function normalizeModelRef(value) {
+  return asString(value, '').trim().toLowerCase();
+}
+
+function modelSupportsReasoning(ref) {
+  const modelRef = normalizeModelRef(ref);
+  if (!modelRef) return undefined;
+
+  // Provider-qualified ids are authoritative when available.
+  if (modelRef === 'nvidia/moonshotai/kimi-k2.5') return true;
+  if (modelRef === 'openrouter/moonshotai/kimi-k2.5') return false;
+
+  // Generic model ids where provider is absent are ambiguous; avoid forcing either way.
+  return undefined;
+}
+
 function extractCognition(event, ctx, prior = {}) {
   const thinkingFromEvent = normalizeThinking(firstDefined(event, [
     'thinking',
@@ -109,12 +125,16 @@ function extractCognition(event, ctx, prior = {}) {
 
   const explicitReasoning = asBool(
     firstDefined(event, [
-      'reasoning',
       'reasoning.enabled',
+      'reasoning',
       'reasoningEnabled',
       'settings.reasoning',
       'settings.reasoningEnabled',
       'metadata.reasoning',
+      'modelInfo.reasoning',
+      'model.reasoning',
+      'agent.modelInfo.reasoning',
+      'capabilities.reasoning',
       'config.reasoning',
       'options.reasoning',
       'options.reasoningEnabled',
@@ -123,12 +143,16 @@ function extractCognition(event, ctx, prior = {}) {
   );
   const explicitReasoningCtx = asBool(
     firstDefined(ctx, [
-      'reasoning',
       'reasoning.enabled',
+      'reasoning',
       'reasoningEnabled',
       'settings.reasoning',
       'settings.reasoningEnabled',
       'metadata.reasoning',
+      'modelInfo.reasoning',
+      'model.reasoning',
+      'agent.modelInfo.reasoning',
+      'capabilities.reasoning',
       'modelSettings.reasoning',
       'modelSettings.reasoningEnabled',
       'session.modelSettings.reasoning',
@@ -144,10 +168,26 @@ function extractCognition(event, ctx, prior = {}) {
   ]), 0);
 
   const priorReasoning = asBool(prior && prior.reasoning, false);
+  const capabilityReasoning = modelSupportsReasoning(firstDefined(event, [
+    'modelRef',
+    'model_key',
+    'modelKey',
+    'model',
+    'agent.model',
+    'metadata.model',
+  ]))
+    ?? modelSupportsReasoning(firstDefined(ctx, [
+      'modelRef',
+      'model_key',
+      'modelKey',
+      'model',
+      'agent.model',
+      'metadata.model',
+    ]));
   let reasoning = explicitReasoning;
   if (reasoning === undefined) reasoning = explicitReasoningCtx;
   if (reasoning === undefined) reasoning = reasoningTokens > 0 ? true : undefined;
-  if (reasoning === undefined && thinking !== 'low') reasoning = true;
+  if (reasoning === undefined) reasoning = capabilityReasoning;
   if (reasoning === undefined) reasoning = priorReasoning;
 
   return {

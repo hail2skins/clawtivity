@@ -204,6 +204,34 @@ test('extractCognition resolves explicit reasoning fields', () => {
   assert.equal(got.reasoning, true);
 });
 
+test('extractCognition keeps reasoning true when thinking is low but reasoning enabled', () => {
+  const got = extractCognition(
+    {},
+    {
+      thinking: 'off',
+      reasoningEnabled: true,
+    },
+    {},
+  );
+
+  assert.equal(got.thinking, 'low');
+  assert.equal(got.reasoning, true);
+});
+
+test('extractCognition infers reasoning capability from nvidia kimi model', () => {
+  const got = extractCognition(
+    {},
+    {
+      model: 'nvidia/moonshotai/kimi-k2.5',
+      thinking: 'off',
+    },
+    {},
+  );
+
+  assert.equal(got.thinking, 'low');
+  assert.equal(got.reasoning, true);
+});
+
 test('extractCognition falls back to low/false when unknown', () => {
   const got = extractCognition({}, {}, {});
   assert.equal(got.thinking, 'low');
