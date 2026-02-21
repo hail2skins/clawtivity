@@ -232,6 +232,20 @@ test('extractCognition infers reasoning capability from nvidia kimi model', () =
   assert.equal(got.reasoning, true);
 });
 
+test('extractCognition infers reasoning capability from bare kimi model id', () => {
+  const got = extractCognition(
+    {},
+    {
+      model: 'moonshotai/kimi-k2.5',
+      thinking: 'off',
+    },
+    {},
+  );
+
+  assert.equal(got.thinking, 'low');
+  assert.equal(got.reasoning, true);
+});
+
 test('extractCognition falls back to low/false when unknown', () => {
   const got = extractCognition({}, {}, {});
   assert.equal(got.thinking, 'low');

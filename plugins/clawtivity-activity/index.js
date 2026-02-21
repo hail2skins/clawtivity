@@ -91,8 +91,9 @@ function modelSupportsReasoning(ref) {
   // Provider-qualified ids are authoritative when available.
   if (modelRef === 'nvidia/moonshotai/kimi-k2.5') return true;
   if (modelRef === 'openrouter/moonshotai/kimi-k2.5') return false;
+  if (modelRef === 'moonshotai/kimi-k2.5') return true;
 
-  // Generic model ids where provider is absent are ambiguous; avoid forcing either way.
+  // Unqualified ids we can safely infer from current deployment conventions.
   return undefined;
 }
 
