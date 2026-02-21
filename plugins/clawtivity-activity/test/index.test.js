@@ -12,6 +12,7 @@ const {
   extractUsage,
   statusFromSuccess,
   coalesceSnapshot,
+  settleSnapshot,
   postWithRetry,
   sendToApi,
 } = require('../index.js');
@@ -200,6 +201,44 @@ test('coalesceSnapshot adopts stronger current usage/model values', () => {
   assert.equal(got.tokensIn, 777);
   assert.equal(got.tokensOut, 55);
   assert.equal(got.userId, 'telegram:1');
+});
+
+test('settleSnapshot adopts late llm_output snapshot for same session', async () => {
+  const recentBySession = new Map();
+  const recentByChannel = new Map();
+
+  const current = {
+    sessionKey: 'agent:main:main',
+    model: 'unknown-model',
+    tokensIn: 0,
+    tokensOut: 0,
+    durationMs: 1000,
+    projectTag: 'workspace',
+    userId: 'telegram:1',
+  };
+  recentBySession.set(current.sessionKey, current);
+  recentByChannel.set('telegram', current);
+
+  const settled = await settleSnapshot({
+    current,
+    sessionKey: current.sessionKey,
+    channel: 'telegram',
+    recentBySession,
+    recentByChannel,
+    settleMs: 1,
+    sleepFn: async () => {
+      recentBySession.set(current.sessionKey, {
+        ...current,
+        model: 'moonshotai/kimi-k2.5',
+        tokensIn: 321,
+        tokensOut: 44,
+      });
+    },
+  });
+
+  assert.equal(settled.model, 'moonshotai/kimi-k2.5');
+  assert.equal(settled.tokensIn, 321);
+  assert.equal(settled.tokensOut, 44);
 });
 
 test('postWithRetry retries with backoff and fails cleanly after final failure', async () => {

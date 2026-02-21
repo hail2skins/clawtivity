@@ -226,6 +226,32 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function settleSnapshot(options = {}) {
+  const {
+    current,
+    sessionKey,
+    channel,
+    recentBySession,
+    recentByChannel,
+    settleMs = 250,
+    sleepFn = sleep,
+  } = options;
+
+  if (settleMs <= 0) return current;
+
+  await sleepFn(settleMs);
+
+  const lateSession = sessionKey && recentBySession ? recentBySession.get(sessionKey) : null;
+  const lateChannel = channel && recentByChannel ? recentByChannel.get(channel) : null;
+  const late = lateSession || lateChannel || null;
+  if (!late) return current;
+
+  return coalesceSnapshot({
+    prior: current,
+    current: late,
+  });
+}
+
 async function postJson(url, payload) {
   if (typeof fetch !== 'function') {
     throw new Error('fetch is unavailable in this runtime');
@@ -279,6 +305,10 @@ function resolveQueueRoot(pluginConfig) {
   return asString(pluginConfig && pluginConfig.queueRoot, DEFAULT_QUEUE_ROOT);
 }
 
+function resolveSettleMs(pluginConfig) {
+  return asInt(pluginConfig && pluginConfig.settleMs, 250);
+}
+
 function enqueuePayload(queueRoot, payload) {
   fs.mkdirSync(queueRoot, { recursive: true });
 
@@ -329,6 +359,7 @@ module.exports = {
     const pluginConfig = (api && api.pluginConfig) || {};
     const apiUrl = resolveApiUrl(pluginConfig);
     const queueRoot = resolveQueueRoot(pluginConfig);
+    const settleMs = resolveSettleMs(pluginConfig);
     const configuredProjectTag = asString(pluginConfig.projectTag, '');
     const configuredUserId = asString(pluginConfig.userId, '');
 
@@ -376,7 +407,7 @@ module.exports = {
       userByChannel.set(channel, to);
     });
 
-    api.on('agent_end', (event, ctx) => {
+    api.on('agent_end', async (event, ctx) => {
       const channel = channelKeyFromContext(ctx, event);
       const sessionKey = asString(sessionKeyFromContext(ctx), sessionKeyFromEvent(event));
       const recentSession = sessionKey ? recentBySession.get(sessionKey) : null;
@@ -405,17 +436,30 @@ module.exports = {
       }
       recentByChannel.set(channel, current);
 
+      const settled = await settleSnapshot({
+        current,
+        sessionKey: current.sessionKey,
+        channel,
+        recentBySession,
+        recentByChannel,
+        settleMs,
+      });
+      if (settled.sessionKey) {
+        recentBySession.set(settled.sessionKey, settled);
+      }
+      recentByChannel.set(channel, settled);
+
       const promptText = extractUserText(event && event.messages);
       const assistantText = extractAssistantText(event && event.messages);
       const payload = buildActivityPayload({
-        sessionKey: current.sessionKey,
-        model: current.model,
-        tokensIn: current.tokensIn,
-        tokensOut: current.tokensOut,
-        durationMs: current.durationMs,
-        projectTag: configuredProjectTag || current.projectTag,
+        sessionKey: settled.sessionKey,
+        model: settled.model,
+        tokensIn: settled.tokensIn,
+        tokensOut: settled.tokensOut,
+        durationMs: settled.durationMs,
+        projectTag: configuredProjectTag || settled.projectTag,
         channel,
-        userId: configuredUserId || userByChannel.get(channel) || current.userId,
+        userId: configuredUserId || userByChannel.get(channel) || settled.userId,
         status: statusFromSuccess(event && event.success),
         toolsUsed: [],
         promptText,
@@ -437,6 +481,7 @@ module.exports = {
   channelKeyFromContext,
   extractUsage,
   coalesceSnapshot,
+  settleSnapshot,
   statusFromSuccess,
   postWithRetry,
   sendToApi,

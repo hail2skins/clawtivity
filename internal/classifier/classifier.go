@@ -128,7 +128,7 @@ func detectKeywordScore(text string) (string, int, bool) {
 			if needle == "" {
 				continue
 			}
-			if strings.Contains(text, needle) {
+			if containsKeyword(text, needle) {
 				total++
 			}
 		}
@@ -161,4 +161,13 @@ func detectKeywordScore(text string) (string, int, bool) {
 	}
 
 	return all[0].category, all[0].score, true
+}
+
+func containsKeyword(text, keyword string) bool {
+	if strings.Contains(keyword, " ") {
+		return strings.Contains(text, keyword)
+	}
+	escaped := regexp.QuoteMeta(keyword)
+	re := regexp.MustCompile(`\b` + escaped + `\b`)
+	return re.MatchString(text)
 }

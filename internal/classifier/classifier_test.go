@@ -74,3 +74,17 @@ func TestClassifyFallsBackToGeneral(t *testing.T) {
 		t.Fatal("expected reason")
 	}
 }
+
+func TestClassifyDoesNotTreatTestingAsCodeKeyword(t *testing.T) {
+	gotCategory, gotReason := Classify(Signals{
+		PromptText:    "Reply with a simple yes here. Testing.",
+		AssistantText: "Yes",
+	})
+
+	if gotCategory != "general" {
+		t.Fatalf("expected general, got %q", gotCategory)
+	}
+	if gotReason == "" {
+		t.Fatal("expected reason")
+	}
+}
