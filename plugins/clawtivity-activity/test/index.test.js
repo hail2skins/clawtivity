@@ -11,6 +11,7 @@ const {
   channelKeyFromContext,
   extractUsage,
   statusFromSuccess,
+  coalesceSnapshot,
   postWithRetry,
   sendToApi,
 } = require('../index.js');
@@ -143,6 +144,62 @@ test('statusFromSuccess maps booleans to activity status strings', () => {
   assert.equal(statusFromSuccess(true), 'success');
   assert.equal(statusFromSuccess(false), 'failed');
   assert.equal(statusFromSuccess(undefined), 'success');
+});
+
+test('coalesceSnapshot keeps prior model/tokens when current event is empty', () => {
+  const got = coalesceSnapshot({
+    prior: {
+      sessionKey: 'agent:main:discord:channel:1',
+      model: 'moonshotai/kimi-k2.5',
+      tokensIn: 1200,
+      tokensOut: 300,
+      durationMs: 0,
+      projectTag: 'workspace',
+      userId: 'discord:channel:1',
+    },
+    current: {
+      sessionKey: 'agent:main:discord:channel:1',
+      model: 'unknown-model',
+      tokensIn: 0,
+      tokensOut: 0,
+      durationMs: 5000,
+      projectTag: 'workspace',
+      userId: 'discord:channel:1',
+    },
+  });
+
+  assert.equal(got.model, 'moonshotai/kimi-k2.5');
+  assert.equal(got.tokensIn, 1200);
+  assert.equal(got.tokensOut, 300);
+  assert.equal(got.durationMs, 5000);
+});
+
+test('coalesceSnapshot adopts stronger current usage/model values', () => {
+  const got = coalesceSnapshot({
+    prior: {
+      sessionKey: 'agent:main:main',
+      model: 'unknown-model',
+      tokensIn: 0,
+      tokensOut: 0,
+      durationMs: 0,
+      projectTag: 'workspace',
+      userId: 'unknown-user',
+    },
+    current: {
+      sessionKey: 'agent:main:main',
+      model: 'moonshotai/kimi-k2.5',
+      tokensIn: 777,
+      tokensOut: 55,
+      durationMs: 3000,
+      projectTag: 'workspace',
+      userId: 'telegram:1',
+    },
+  });
+
+  assert.equal(got.model, 'moonshotai/kimi-k2.5');
+  assert.equal(got.tokensIn, 777);
+  assert.equal(got.tokensOut, 55);
+  assert.equal(got.userId, 'telegram:1');
 });
 
 test('postWithRetry retries with backoff and fails cleanly after final failure', async () => {

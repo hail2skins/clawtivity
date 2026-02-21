@@ -43,13 +43,23 @@ function channelKeyFromContext(ctx, event) {
 
 function sessionKeyFromContext(ctx) {
   return asString(
-    (ctx && (ctx.sessionKey || ctx.conversationId || (ctx.session && ctx.session.key))),
+    (ctx && (ctx.sessionKey || ctx.conversationId || (ctx.session && ctx.session.key) || ctx.threadId)),
     ''
   );
 }
 
+function sessionKeyFromEvent(event) {
+  return asString(
+    event && (event.sessionKey || event.conversationId || event.threadId || (event.session && event.session.key)),
+    '',
+  );
+}
+
 function extractUsage(event) {
-  const usage = (event && event.usage) || {};
+  const usage = (event && (event.usage
+    || (event.result && event.result.usage)
+    || event.tokenUsage
+    || (event.metrics && event.metrics.usage))) || {};
   return {
     tokensIn: asInt(usage.input ?? usage.input_tokens ?? usage.prompt_tokens, 0),
     tokensOut: asInt(usage.output ?? usage.output_tokens ?? usage.completion_tokens, 0),
@@ -58,10 +68,41 @@ function extractUsage(event) {
 
 function modelFromEvent(event, ctx) {
   return asString(
-    (event && (event.model || (event.result && event.result.model)))
-      || (ctx && (ctx.model || (ctx.metadata && ctx.metadata.model))),
+    (event && (event.model
+      || (event.result && event.result.model)
+      || (event.modelInfo && event.modelInfo.id)
+      || (event.agent && event.agent.model)
+      || (event.metadata && event.metadata.model)))
+      || (ctx && (ctx.model
+        || (ctx.metadata && ctx.metadata.model)
+        || (ctx.agent && ctx.agent.model))),
     'unknown-model'
   );
+}
+
+function isKnownModel(model) {
+  const normalized = asString(model, 'unknown-model').toLowerCase();
+  return normalized !== 'unknown-model';
+}
+
+function coalesceSnapshot(params) {
+  const { prior, current } = params || {};
+  const safePrior = prior || {};
+  const safeCurrent = current || {};
+
+  const currentModel = asString(safeCurrent.model, 'unknown-model');
+  const priorModel = asString(safePrior.model, 'unknown-model');
+
+  return {
+    ts: Date.now(),
+    sessionKey: asString(safeCurrent.sessionKey, asString(safePrior.sessionKey, '')),
+    model: isKnownModel(currentModel) ? currentModel : priorModel,
+    tokensIn: Math.max(asInt(safeCurrent.tokensIn, 0), asInt(safePrior.tokensIn, 0)),
+    tokensOut: Math.max(asInt(safeCurrent.tokensOut, 0), asInt(safePrior.tokensOut, 0)),
+    durationMs: Math.max(asInt(safeCurrent.durationMs, 0), asInt(safePrior.durationMs, 0)),
+    projectTag: asString(safeCurrent.projectTag, asString(safePrior.projectTag, path.basename(process.cwd()))),
+    userId: asString(safeCurrent.userId, asString(safePrior.userId, 'unknown-user')),
+  };
 }
 
 function statusFromSuccess(success) {
@@ -292,23 +333,32 @@ module.exports = {
     const configuredUserId = asString(pluginConfig.userId, '');
 
     const recentByChannel = new Map();
+    const recentBySession = new Map();
     const userByChannel = new Map();
 
     api.on('llm_output', (event, ctx) => {
       const channel = channelKeyFromContext(ctx, event);
-      const sessionKey = sessionKeyFromContext(ctx);
+      const sessionKey = asString(sessionKeyFromContext(ctx), sessionKeyFromEvent(event));
       if (!sessionKey) return;
       const usage = extractUsage(event);
 
+      const snapshot = coalesceSnapshot({
+        prior: recentBySession.get(sessionKey),
+        current: {
+          ts: Date.now(),
+          sessionKey,
+          model: modelFromEvent(event, ctx),
+          tokensIn: usage.tokensIn,
+          tokensOut: usage.tokensOut,
+          durationMs: asInt(event && event.durationMs, 0),
+          projectTag: configuredProjectTag || path.basename(asString(ctx && ctx.workspaceDir, process.cwd())),
+          userId: configuredUserId || userByChannel.get(channel) || 'unknown-user',
+        },
+      });
+      recentBySession.set(sessionKey, snapshot);
       recentByChannel.set(channel, {
-        ts: Date.now(),
+        ...snapshot,
         sessionKey,
-        model: modelFromEvent(event, ctx),
-        tokensIn: usage.tokensIn,
-        tokensOut: usage.tokensOut,
-        durationMs: 0,
-        projectTag: configuredProjectTag || path.basename(asString(ctx && ctx.workspaceDir, process.cwd())),
-        userId: configuredUserId || 'unknown-user',
       });
     });
 
@@ -328,20 +378,31 @@ module.exports = {
 
     api.on('agent_end', (event, ctx) => {
       const channel = channelKeyFromContext(ctx, event);
-      const recent = recentByChannel.get(channel);
+      const sessionKey = asString(sessionKeyFromContext(ctx), sessionKeyFromEvent(event));
+      const recentSession = sessionKey ? recentBySession.get(sessionKey) : null;
+      const recentChannel = recentByChannel.get(channel);
+      const recent = recentSession || recentChannel || null;
       const usage = extractUsage(event);
-      const current = recent || {
-        ts: Date.now(),
-        sessionKey: sessionKeyFromContext(ctx),
-        model: modelFromEvent(event, ctx),
-        tokensIn: usage.tokensIn,
-        tokensOut: usage.tokensOut,
-        durationMs: 0,
-        projectTag: configuredProjectTag || path.basename(asString(ctx && ctx.workspaceDir, process.cwd())),
-        userId: configuredUserId || userByChannel.get(channel) || 'unknown-user',
-      };
-      current.durationMs = asInt(event && event.durationMs, 0);
+      const current = coalesceSnapshot({
+        prior: recent,
+        current: {
+          ts: Date.now(),
+          sessionKey,
+          model: modelFromEvent(event, ctx),
+          tokensIn: usage.tokensIn,
+          tokensOut: usage.tokensOut,
+          durationMs: asInt(event && event.durationMs, 0),
+          projectTag: configuredProjectTag || path.basename(asString(ctx && ctx.workspaceDir, process.cwd())),
+          userId: configuredUserId || userByChannel.get(channel) || 'unknown-user',
+        },
+      });
+      if (!current.sessionKey && recentChannel && recentChannel.sessionKey) {
+        current.sessionKey = recentChannel.sessionKey;
+      }
       current.ts = Date.now();
+      if (current.sessionKey) {
+        recentBySession.set(current.sessionKey, current);
+      }
       recentByChannel.set(channel, current);
 
       const promptText = extractUserText(event && event.messages);
@@ -375,6 +436,7 @@ module.exports = {
   extractUserText,
   channelKeyFromContext,
   extractUsage,
+  coalesceSnapshot,
   statusFromSuccess,
   postWithRetry,
   sendToApi,
