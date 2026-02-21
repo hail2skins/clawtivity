@@ -236,13 +236,26 @@ function coalesceSnapshot(params) {
     thinking: currentThinking || priorThinking || 'low',
     reasoning: currentReasoning === undefined ? priorReasoning : currentReasoning,
     projectTag: asString(safeCurrent.projectTag, asString(safePrior.projectTag, path.basename(process.cwd()))),
-    userId: asString(safeCurrent.userId, asString(safePrior.userId, 'unknown-user')),
+    userId: resolveUserId(
+      asString(safeCurrent.userId, asString(safePrior.userId, '')),
+      asString(safeCurrent.channel, asString(safePrior.channel, 'unknown-channel')),
+      asString(safeCurrent.sessionKey, asString(safePrior.sessionKey, '')),
+    ),
   };
 }
 
 function statusFromSuccess(success) {
   if (success === false) return 'failed';
   return 'success';
+}
+
+function resolveUserId(userId, channel, sessionKey) {
+  const explicit = asString(userId, '');
+  if (explicit) return explicit;
+  const normalizedChannel = asString(channel, 'unknown-channel');
+  const normalizedSession = asString(sessionKey, '');
+  if (normalizedSession) return `${normalizedChannel}:${normalizedSession}`;
+  return `${normalizedChannel}:agent:main`;
 }
 
 function buildActivityPayload(params) {
@@ -283,7 +296,7 @@ function buildActivityPayload(params) {
     reasoning: asBool(reasoning, false),
     channel: normalizedChannel,
     status: asString(status, 'success'),
-    user_id: asString(userId, 'unknown-user'),
+    user_id: resolveUserId(userId, normalizedChannel, normalizedSession),
     tools_used: Array.isArray(toolsUsed) ? toolsUsed : [],
     prompt_text: asString(promptText, ''),
     assistant_text: asString(assistantText, ''),
@@ -315,7 +328,11 @@ function mergeRecentByChannel(params) {
     durationMs: useRecent ? recent.durationMs : 0,
     projectTag: asString(projectTag, useRecent ? recent.projectTag : path.basename(process.cwd())),
     channel: channelId,
-    userId: asString(userId, useRecent ? recent.userId : (conversationId || eventTo || 'unknown-user')),
+    userId: resolveUserId(
+      asString(userId, useRecent ? recent.userId : (conversationId || eventTo || '')),
+      channelId,
+      useRecent ? recent.sessionKey : asString(conversationId, ''),
+    ),
     status: success ? 'success' : 'failed',
     toolsUsed: [],
     nowIso: nowIso(),
@@ -516,6 +533,7 @@ module.exports = {
         current: {
           ts: Date.now(),
           sessionKey,
+          channel,
           model: modelFromEvent(event, ctx),
           tokensIn: usage.tokensIn,
           tokensOut: usage.tokensOut,
@@ -523,7 +541,7 @@ module.exports = {
           thinking: cognition.thinking,
           reasoning: cognition.reasoning,
           projectTag: configuredProjectTag || path.basename(asString(ctx && ctx.workspaceDir, process.cwd())),
-          userId: configuredUserId || userByChannel.get(channel) || 'unknown-user',
+          userId: configuredUserId || userByChannel.get(channel) || '',
         },
       });
       recentBySession.set(sessionKey, snapshot);
@@ -560,6 +578,7 @@ module.exports = {
         current: {
           ts: Date.now(),
           sessionKey,
+          channel,
           model: modelFromEvent(event, ctx),
           tokensIn: usage.tokensIn,
           tokensOut: usage.tokensOut,
@@ -567,7 +586,7 @@ module.exports = {
           thinking: cognition.thinking,
           reasoning: cognition.reasoning,
           projectTag: configuredProjectTag || path.basename(asString(ctx && ctx.workspaceDir, process.cwd())),
-          userId: configuredUserId || userByChannel.get(channel) || 'unknown-user',
+          userId: configuredUserId || userByChannel.get(channel) || '',
         },
       });
       if (!current.sessionKey && recentChannel && recentChannel.sessionKey) {
@@ -625,6 +644,7 @@ module.exports = {
   extractUserText,
   channelKeyFromContext,
   extractUsage,
+  resolveUserId,
   extractCognition,
   coalesceSnapshot,
   settleSnapshot,

@@ -11,6 +11,7 @@ const {
   channelKeyFromContext,
   extractUsage,
   extractCognition,
+  resolveUserId,
   statusFromSuccess,
   coalesceSnapshot,
   settleSnapshot,
@@ -75,6 +76,24 @@ test('buildActivityPayload produces fallback session key when recent context abs
   assert.equal(payload.status, 'failed');
   assert.equal(payload.project_tag, 'clawtivity');
   assert.equal(payload.created_at, '2026-02-18T00:00:00Z');
+});
+
+test('buildActivityPayload derives deterministic user_id when missing', () => {
+  const payload = buildActivityPayload({
+    sessionKey: 'agent:main:main',
+    model: '',
+    tokensIn: 0,
+    tokensOut: 0,
+    durationMs: 0,
+    projectTag: 'workspace',
+    channel: 'webchat',
+    userId: '',
+    status: 'success',
+    toolsUsed: [],
+    nowIso: '2026-02-18T00:00:00Z',
+  });
+
+  assert.equal(payload.user_id, 'webchat:agent:main:main');
 });
 
 test('buildActivityPayload carries text signals for classifier', () => {
@@ -146,6 +165,12 @@ test('channelKeyFromContext prefers channelId then messageProvider', () => {
   assert.equal(channelKeyFromContext({ channelId: 'telegram', messageProvider: 'discord' }, {}), 'telegram');
   assert.equal(channelKeyFromContext({ messageProvider: 'discord' }, {}), 'discord');
   assert.equal(channelKeyFromContext({}, { to: 'user-1' }), 'user-1');
+});
+
+test('resolveUserId falls back to channel/session identity', () => {
+  assert.equal(resolveUserId('', 'webchat', 'agent:main:main'), 'webchat:agent:main:main');
+  assert.equal(resolveUserId('', 'discord', ''), 'discord:agent:main');
+  assert.equal(resolveUserId('telegram:123', 'telegram', 'agent:main:main'), 'telegram:123');
 });
 
 test('extractUsage supports multiple event usage shapes', () => {
