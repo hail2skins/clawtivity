@@ -241,6 +241,43 @@ func TestPostActivityDoesNotOverrideProjectFromPromptConnectorWord(t *testing.T)
 	}
 }
 
+func TestPostActivityPromptUnknownProjectDoesNotOverrideWhenKnownFoldersExist(t *testing.T) {
+	handler, cleanup := newTestHandler(t)
+	defer cleanup()
+
+	payload := map[string]any{
+		"session_key":    "session-proj-5",
+		"model":          "gpt-5",
+		"tokens_in":      10,
+		"tokens_out":     5,
+		"cost_estimate":  0.0,
+		"duration_ms":    int64(500),
+		"project_tag":    "workspace",
+		"project_reason": "workspace_path",
+		"channel":        "telegram",
+		"status":         "success",
+		"user_id":        "u1",
+		"prompt_text":    "Please continue project totally-unknown-proj",
+	}
+
+	rr := performJSON(t, handler, http.MethodPost, "/api/activity", payload)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, rr.Code, rr.Body.String())
+	}
+
+	var got database.ActivityFeed
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("expected valid json response: %v", err)
+	}
+
+	if got.ProjectTag != "workspace" {
+		t.Fatalf("expected project_tag workspace, got %q", got.ProjectTag)
+	}
+	if got.ProjectReason != "workspace_path" {
+		t.Fatalf("expected project_reason workspace_path, got %q", got.ProjectReason)
+	}
+}
+
 func TestGetActivitySupportsProjectModelDateFilters(t *testing.T) {
 	handler, cleanup := newTestHandler(t)
 	defer cleanup()

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -83,6 +85,9 @@ func applyProjectAssociation(activity *database.ActivityFeed, promptText, _ stri
 	if candidate == "" {
 		return
 	}
+	if !projectExistsUnderKnownRoots(candidate) {
+		return
+	}
 
 	activity.ProjectTag = candidate
 	activity.ProjectReason = "prompt_override"
@@ -106,4 +111,61 @@ func extractProjectOverride(text string) string {
 		return ""
 	}
 	return candidate
+}
+
+func projectExistsUnderKnownRoots(project string) bool {
+	roots := discoverProjectRoots()
+	if len(roots) == 0 {
+		// If no roots can be discovered, keep behavior permissive.
+		return true
+	}
+
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		target := filepath.Join(root, project)
+		info, err := os.Stat(target)
+		if err == nil && info.IsDir() {
+			return true
+		}
+	}
+
+	return false
+}
+
+func discoverProjectRoots() []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, 4)
+
+	add := func(dir string) {
+		clean := strings.TrimSpace(filepath.Clean(dir))
+		if clean == "" || seen[clean] {
+			return
+		}
+		seen[clean] = true
+		out = append(out, clean)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil || strings.TrimSpace(cwd) == "" {
+		return out
+	}
+
+	add(filepath.Join(cwd, "projects"))
+	add(filepath.Join(cwd, "project"))
+
+	parts := strings.Split(filepath.ToSlash(cwd), "/")
+	for i, part := range parts {
+		if part != "projects" && part != "project" {
+			continue
+		}
+		root := strings.Join(parts[:i+1], "/")
+		if strings.HasPrefix(filepath.ToSlash(cwd), "/") {
+			root = "/" + strings.TrimPrefix(root, "/")
+		}
+		add(root)
+	}
+
+	return out
 }

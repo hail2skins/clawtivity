@@ -198,13 +198,45 @@ test('resolveUserId falls back to channel/session identity', () => {
 });
 
 test('resolveProjectContext uses prompt override first', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawtivity-project-roots-'));
+  fs.mkdirSync(path.join(root, 'projects', 'claw-xyz'), { recursive: true });
+
   const got = resolveProjectContext({
     promptText: 'Work on project CLAW-XYZ and do the next steps.',
-    workspaceDir: '/Users/art/.openclaw/workspace/projects/clawtivity',
+    workspaceDir: path.join(root, 'projects', 'claw-xyz'),
     configuredProjectTag: 'override',
   });
   assert.equal(got.projectTag, 'claw-xyz');
   assert.equal(got.projectReason, 'prompt_override');
+});
+
+test('resolveProjectContext prefers prompt override when project folder exists', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawtivity-project-roots-'));
+  fs.mkdirSync(path.join(root, 'projects', 'clawtivity'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'projects', 'other'), { recursive: true });
+
+  const got = resolveProjectContext({
+    promptText: 'please continue on project clawtivity',
+    workspaceDir: path.join(root, 'projects', 'other'),
+    configuredProjectTag: '',
+  });
+
+  assert.equal(got.projectTag, 'clawtivity');
+  assert.equal(got.projectReason, 'prompt_override');
+});
+
+test('resolveProjectContext does not use prompt override when project folder does not exist', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawtivity-project-roots-'));
+  fs.mkdirSync(path.join(root, 'projects', 'clawtivity'), { recursive: true });
+
+  const got = resolveProjectContext({
+    promptText: 'please continue on project totally-unknown-proj',
+    workspaceDir: path.join(root, 'projects', 'clawtivity'),
+    configuredProjectTag: '',
+  });
+
+  assert.equal(got.projectTag, 'clawtivity');
+  assert.equal(got.projectReason, 'workspace_path');
 });
 
 test('resolveProjectContext uses /projects folder name when prompt override missing', () => {

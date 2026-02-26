@@ -129,6 +129,38 @@ function projectFromWorkspaceDir(workspaceDir) {
   return normalizeProjectTag(match[1]);
 }
 
+function discoverProjectRoots(workspaceDir) {
+  const candidates = [asString(workspaceDir, ''), process.cwd()].filter(Boolean);
+  const roots = new Set();
+
+  for (const candidate of candidates) {
+    const normalized = candidate.replace(/\\/g, '/');
+    const match = normalized.match(/^(.*\/projects?)(?:\/.*)?$/i);
+    if (match && match[1]) {
+      roots.add(path.normalize(match[1]));
+    }
+    roots.add(path.join(candidate, 'projects'));
+    roots.add(path.join(candidate, 'project'));
+  }
+
+  return Array.from(roots);
+}
+
+function projectExistsUnderKnownRoots(projectTag, workspaceDir) {
+  const roots = discoverProjectRoots(workspaceDir);
+  if (roots.length === 0) return true;
+
+  for (const root of roots) {
+    try {
+      const info = fs.statSync(path.join(root, projectTag));
+      if (info.isDirectory()) return true;
+    } catch (err) {
+      // ignore missing roots/directories
+    }
+  }
+  return false;
+}
+
 function resolveProjectContext(options = {}) {
   const {
     promptText,
@@ -137,7 +169,7 @@ function resolveProjectContext(options = {}) {
   } = options;
 
   const fromPrompt = projectFromPrompt(promptText);
-  if (fromPrompt) {
+  if (fromPrompt && projectExistsUnderKnownRoots(fromPrompt, workspaceDir)) {
     return {
       projectTag: fromPrompt,
       projectReason: 'prompt_override',
