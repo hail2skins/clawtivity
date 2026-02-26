@@ -1,12 +1,15 @@
 package server
 
 import (
+	"regexp"
 	"strings"
 	"time"
 
 	"clawtivity/internal/classifier"
 	"clawtivity/internal/database"
 )
+
+var projectOverridePattern = regexp.MustCompile(`(?i)\bproject\b\s*:?\s*([a-z0-9][a-z0-9._-]*)`)
 
 type activityIngest struct {
 	database.ActivityFeed
@@ -59,4 +62,33 @@ func applyActivityClassification(activity *database.ActivityFeed, signals classi
 	derivedCategory, reason := classifier.Classify(signals)
 	activity.Category = derivedCategory
 	activity.CategoryReason = reason
+}
+
+func applyProjectAssociation(activity *database.ActivityFeed, promptText, assistantText string) {
+	if activity == nil {
+		return
+	}
+
+	candidate := extractProjectOverride(promptText)
+	if candidate == "" {
+		candidate = extractProjectOverride(assistantText)
+	}
+	if candidate == "" {
+		return
+	}
+
+	activity.ProjectTag = candidate
+	activity.ProjectReason = "prompt_override"
+}
+
+func extractProjectOverride(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	match := projectOverridePattern.FindStringSubmatch(trimmed)
+	if len(match) < 2 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(match[1]))
 }

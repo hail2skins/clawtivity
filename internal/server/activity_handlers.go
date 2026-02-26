@@ -34,6 +34,7 @@ func (s *Server) createActivityHandler(c *gin.Context) {
 	// Always generate a fresh ID server-side.
 	input.ActivityFeed.ID = ""
 	normalizeActivity(&input.ActivityFeed)
+	applyProjectAssociation(&input.ActivityFeed, input.PromptText, input.AssistantText)
 	applyActivityClassification(&input.ActivityFeed, classifier.Signals{
 		PromptText:    input.PromptText,
 		AssistantText: input.AssistantText,
