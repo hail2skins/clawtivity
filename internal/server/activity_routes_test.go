@@ -278,6 +278,43 @@ func TestPostActivityPromptUnknownProjectDoesNotOverrideWhenKnownFoldersExist(t 
 	}
 }
 
+func TestPostActivityPromptPathMentionOverridesProject(t *testing.T) {
+	handler, cleanup := newTestHandler(t)
+	defer cleanup()
+
+	payload := map[string]any{
+		"session_key":    "session-proj-6",
+		"model":          "gpt-5",
+		"tokens_in":      10,
+		"tokens_out":     5,
+		"cost_estimate":  0.0,
+		"duration_ms":    int64(500),
+		"project_tag":    "workspace",
+		"project_reason": "fallback:unknown",
+		"channel":        "telegram",
+		"status":         "success",
+		"user_id":        "u1",
+		"prompt_text":    "Codex is working in /projects/clawtivity presently. Please review it.",
+	}
+
+	rr := performJSON(t, handler, http.MethodPost, "/api/activity", payload)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, rr.Code, rr.Body.String())
+	}
+
+	var got database.ActivityFeed
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("expected valid json response: %v", err)
+	}
+
+	if got.ProjectTag != "clawtivity" {
+		t.Fatalf("expected project_tag clawtivity, got %q", got.ProjectTag)
+	}
+	if got.ProjectReason != "prompt_path_mention" {
+		t.Fatalf("expected project_reason prompt_path_mention, got %q", got.ProjectReason)
+	}
+}
+
 func TestGetActivitySupportsProjectModelDateFilters(t *testing.T) {
 	handler, cleanup := newTestHandler(t)
 	defer cleanup()

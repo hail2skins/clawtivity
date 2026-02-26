@@ -12,6 +12,7 @@ import (
 )
 
 var projectOverridePattern = regexp.MustCompile(`(?i)\bproject\b\s*:?\s*([a-z0-9][a-z0-9._-]*)`)
+var projectPathMentionPattern = regexp.MustCompile(`(?i)/projects?/([a-z0-9][a-z0-9._-]*)`)
 var projectOverrideStopwords = map[string]struct{}{
 	"as":  {},
 	"is":  {},
@@ -83,6 +84,11 @@ func applyProjectAssociation(activity *database.ActivityFeed, promptText, _ stri
 
 	candidate := extractProjectOverride(promptText)
 	if candidate == "" {
+		candidate = extractProjectPathMention(promptText)
+		if candidate != "" {
+			activity.ProjectTag = candidate
+			activity.ProjectReason = "prompt_path_mention"
+		}
 		return
 	}
 	if !projectExistsUnderKnownRoots(candidate) {
@@ -108,6 +114,23 @@ func extractProjectOverride(text string) string {
 		return ""
 	}
 	if _, stopword := projectOverrideStopwords[candidate]; stopword {
+		return ""
+	}
+	return candidate
+}
+
+func extractProjectPathMention(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	match := projectPathMentionPattern.FindStringSubmatch(trimmed)
+	if len(match) < 2 {
+		return ""
+	}
+	candidate := strings.ToLower(strings.TrimSpace(match[1]))
+	candidate = strings.Trim(candidate, ".,;:!?)]}\"'")
+	if candidate == "" {
 		return ""
 	}
 	return candidate

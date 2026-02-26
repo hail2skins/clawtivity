@@ -239,6 +239,16 @@ test('resolveProjectContext does not use prompt override when project folder doe
   assert.equal(got.projectReason, 'workspace_path');
 });
 
+test('resolveProjectContext uses /projects path mention from prompt', () => {
+  const got = resolveProjectContext({
+    promptText: 'Codex is working in /projects/clawtivity right now.',
+    workspaceDir: '',
+    configuredProjectTag: '',
+  });
+  assert.equal(got.projectTag, 'clawtivity');
+  assert.equal(got.projectReason, 'prompt_path_mention');
+});
+
 test('resolveProjectContext uses /projects folder name when prompt override missing', () => {
   const got = resolveProjectContext({
     promptText: 'Please proceed.',

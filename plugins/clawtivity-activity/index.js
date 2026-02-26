@@ -7,6 +7,7 @@ const DEFAULT_BACKOFF_MS = [1000, 2000, 4000];
 const DEFAULT_API_URL = 'http://localhost:18730/api/activity';
 const DEFAULT_QUEUE_ROOT = path.join(os.homedir(), '.clawtivity', 'queue');
 const PROJECT_OVERRIDE_PATTERN = /\bproject\b\s*:?\s*([a-zA-Z0-9][a-zA-Z0-9._-]*)/i;
+const PROJECT_PATH_MENTION_PATTERN = /\/projects?\/([a-zA-Z0-9][a-zA-Z0-9._-]*)/i;
 const PROJECT_OVERRIDE_STOPWORDS = new Set(['as', 'is', 'was', 'the', 'a', 'an', 'to', 'for']);
 
 function nowIso() {
@@ -120,6 +121,16 @@ function projectFromPrompt(promptText) {
   return candidate;
 }
 
+function projectFromPathMention(promptText) {
+  const text = asString(promptText, '');
+  if (!text) return '';
+  const match = text.match(PROJECT_PATH_MENTION_PATTERN);
+  if (!match || match.length < 2) return '';
+  const candidate = normalizeProjectTag(match[1].replace(/[.,;:!?)]}]+$/g, ''));
+  if (!candidate) return '';
+  return candidate;
+}
+
 function projectFromWorkspaceDir(workspaceDir) {
   const dir = asString(workspaceDir, '');
   if (!dir) return '';
@@ -173,6 +184,14 @@ function resolveProjectContext(options = {}) {
     return {
       projectTag: fromPrompt,
       projectReason: 'prompt_override',
+    };
+  }
+
+  const fromPathMention = projectFromPathMention(promptText);
+  if (fromPathMention) {
+    return {
+      projectTag: fromPathMention,
+      projectReason: 'prompt_path_mention',
     };
   }
 
