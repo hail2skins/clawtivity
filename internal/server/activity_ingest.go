@@ -64,15 +64,12 @@ func applyActivityClassification(activity *database.ActivityFeed, signals classi
 	activity.CategoryReason = reason
 }
 
-func applyProjectAssociation(activity *database.ActivityFeed, promptText, assistantText string) {
+func applyProjectAssociation(activity *database.ActivityFeed, promptText, _ string) {
 	if activity == nil {
 		return
 	}
 
 	candidate := extractProjectOverride(promptText)
-	if candidate == "" {
-		candidate = extractProjectOverride(assistantText)
-	}
 	if candidate == "" {
 		return
 	}
@@ -90,5 +87,10 @@ func extractProjectOverride(text string) string {
 	if len(match) < 2 {
 		return ""
 	}
-	return strings.ToLower(strings.TrimSpace(match[1]))
+	candidate := strings.ToLower(strings.TrimSpace(match[1]))
+	candidate = strings.Trim(candidate, ".,;:!?)]}\"'")
+	if candidate == "" {
+		return ""
+	}
+	return candidate
 }
