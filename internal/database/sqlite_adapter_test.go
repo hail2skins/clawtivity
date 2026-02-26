@@ -56,6 +56,7 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 		"cost_estimate",
 		"duration_ms",
 		"project_tag",
+		"project_reason",
 		"external_ref",
 		"category",
 		"category_reason",
@@ -155,6 +156,7 @@ func TestActivityFeedPersistsNewFields(t *testing.T) {
 		CostEstimate:   0.002,
 		DurationMS:     500,
 		ProjectTag:     "clawtivity",
+		ProjectReason:  "workspace_path",
 		Category:       "research",
 		CategoryReason: "keyword_score:research=2",
 		Thinking:       "medium",
@@ -175,6 +177,9 @@ func TestActivityFeedPersistsNewFields(t *testing.T) {
 
 	if fetched.Category != created.Category {
 		t.Fatalf("expected category %q, got %q", created.Category, fetched.Category)
+	}
+	if fetched.ProjectReason != created.ProjectReason {
+		t.Fatalf("expected project_reason %q, got %q", created.ProjectReason, fetched.ProjectReason)
 	}
 	if fetched.Thinking != created.Thinking {
 		t.Fatalf("expected thinking %q, got %q", created.Thinking, fetched.Thinking)

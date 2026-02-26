@@ -29,6 +29,7 @@ type ActivityFeed struct {
 	CostEstimate   float64   `json:"cost_estimate"`
 	DurationMS     int64     `json:"duration_ms"`
 	ProjectTag     string    `gorm:"index:idx_activity_feed_project_tag" json:"project_tag"`
+	ProjectReason  string    `json:"project_reason"`
 	ExternalRef    string    `json:"external_ref"`
 	Category       string    `gorm:"index:idx_activity_feed_category" json:"category"`
 	CategoryReason string    `json:"category_reason"`

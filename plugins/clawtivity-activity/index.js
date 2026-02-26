@@ -6,6 +6,7 @@ const DEFAULT_FRESHNESS_MS = 60_000;
 const DEFAULT_BACKOFF_MS = [1000, 2000, 4000];
 const DEFAULT_API_URL = 'http://localhost:18730/api/activity';
 const DEFAULT_QUEUE_ROOT = path.join(os.homedir(), '.clawtivity', 'queue');
+const PROJECT_OVERRIDE_PATTERN = /\bproject\b\s*:?\s*([a-zA-Z0-9][a-zA-Z0-9._-]*)/i;
 
 function nowIso() {
   return new Date().toISOString();
@@ -95,6 +96,72 @@ function modelSupportsReasoning(ref) {
 
   // Unqualified ids we can safely infer from current deployment conventions.
   return undefined;
+}
+
+function normalizeProjectTag(value) {
+  const raw = asString(value, '').trim().toLowerCase();
+  if (!raw) return '';
+  return raw
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9._-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function projectFromPrompt(promptText) {
+  const text = asString(promptText, '');
+  if (!text) return '';
+  const match = text.match(PROJECT_OVERRIDE_PATTERN);
+  if (!match || match.length < 2) return '';
+  const candidate = normalizeProjectTag(match[1]);
+  if (!candidate) return '';
+  return candidate;
+}
+
+function projectFromWorkspaceDir(workspaceDir) {
+  const dir = asString(workspaceDir, '');
+  if (!dir) return '';
+  const normalized = dir.replace(/\\/g, '/');
+  const match = normalized.match(/\/projects?\/([^/]+)/i);
+  if (!match || match.length < 2) return '';
+  return normalizeProjectTag(match[1]);
+}
+
+function resolveProjectContext(options = {}) {
+  const {
+    promptText,
+    workspaceDir,
+    configuredProjectTag,
+  } = options;
+
+  const fromPrompt = projectFromPrompt(promptText);
+  if (fromPrompt) {
+    return {
+      projectTag: fromPrompt,
+      projectReason: 'prompt_override',
+    };
+  }
+
+  const fromPath = projectFromWorkspaceDir(workspaceDir);
+  if (fromPath) {
+    return {
+      projectTag: fromPath,
+      projectReason: 'workspace_path',
+    };
+  }
+
+  const fromConfig = normalizeProjectTag(configuredProjectTag);
+  if (fromConfig) {
+    return {
+      projectTag: fromConfig,
+      projectReason: 'plugin_config',
+    };
+  }
+
+  return {
+    projectTag: 'workspace',
+    projectReason: 'fallback:unknown',
+  };
 }
 
 function extractCognition(event, ctx, prior = {}) {
@@ -276,7 +343,8 @@ function coalesceSnapshot(params) {
     durationMs: Math.max(asInt(safeCurrent.durationMs, 0), asInt(safePrior.durationMs, 0)),
     thinking: currentThinking || priorThinking || 'low',
     reasoning: currentReasoning === undefined ? priorReasoning : currentReasoning,
-    projectTag: asString(safeCurrent.projectTag, asString(safePrior.projectTag, path.basename(process.cwd()))),
+    projectTag: asString(safeCurrent.projectTag, asString(safePrior.projectTag, 'workspace')),
+    projectReason: asString(safeCurrent.projectReason, asString(safePrior.projectReason, 'fallback:unknown')),
     userId: resolveUserId(
       asString(safeCurrent.userId, asString(safePrior.userId, '')),
       asString(safeCurrent.channel, asString(safePrior.channel, 'unknown-channel')),
@@ -307,6 +375,7 @@ function buildActivityPayload(params) {
     tokensOut,
     durationMs,
     projectTag,
+    projectReason,
     channel,
     userId,
     status,
@@ -330,7 +399,8 @@ function buildActivityPayload(params) {
     tokens_out: asInt(tokensOut, 0),
     cost_estimate: 0,
     duration_ms: asInt(durationMs, 0),
-    project_tag: asString(projectTag, 'unknown-project'),
+    project_tag: asString(projectTag, 'workspace'),
+    project_reason: asString(projectReason, 'fallback:unknown'),
     external_ref: '',
     category: 'general',
     thinking: normalizeThinking(thinking) || 'low',
@@ -367,7 +437,8 @@ function mergeRecentByChannel(params) {
     tokensIn: useRecent ? recent.tokensIn : 0,
     tokensOut: useRecent ? recent.tokensOut : 0,
     durationMs: useRecent ? recent.durationMs : 0,
-    projectTag: asString(projectTag, useRecent ? recent.projectTag : path.basename(process.cwd())),
+    projectTag: asString(projectTag, useRecent ? recent.projectTag : 'workspace'),
+    projectReason: useRecent ? asString(recent.projectReason, 'fallback:unknown') : 'fallback:unknown',
     channel: channelId,
     userId: resolveUserId(
       asString(userId, useRecent ? recent.userId : (conversationId || eventTo || '')),
@@ -568,6 +639,10 @@ module.exports = {
       if (!sessionKey) return;
       const usage = extractUsage(event);
       const cognition = extractCognition(event, ctx, recentBySession.get(sessionKey));
+      const project = resolveProjectContext({
+        workspaceDir: ctx && ctx.workspaceDir,
+        configuredProjectTag,
+      });
 
       const snapshot = coalesceSnapshot({
         prior: recentBySession.get(sessionKey),
@@ -581,7 +656,8 @@ module.exports = {
           durationMs: asInt(event && event.durationMs, 0),
           thinking: cognition.thinking,
           reasoning: cognition.reasoning,
-          projectTag: configuredProjectTag || path.basename(asString(ctx && ctx.workspaceDir, process.cwd())),
+          projectTag: project.projectTag,
+          projectReason: project.projectReason,
           userId: configuredUserId || userByChannel.get(channel) || '',
         },
       });
@@ -614,6 +690,13 @@ module.exports = {
       const recent = recentSession || recentChannel || null;
       const usage = extractUsage(event);
       const cognition = extractCognition(event, ctx, recent);
+      const promptText = extractUserText(event && event.messages);
+      const assistantText = extractAssistantText(event && event.messages);
+      const project = resolveProjectContext({
+        promptText,
+        workspaceDir: ctx && ctx.workspaceDir,
+        configuredProjectTag,
+      });
       const current = coalesceSnapshot({
         prior: recent,
         current: {
@@ -626,7 +709,8 @@ module.exports = {
           durationMs: asInt(event && event.durationMs, 0),
           thinking: cognition.thinking,
           reasoning: cognition.reasoning,
-          projectTag: configuredProjectTag || path.basename(asString(ctx && ctx.workspaceDir, process.cwd())),
+          projectTag: project.projectTag,
+          projectReason: project.projectReason,
           userId: configuredUserId || userByChannel.get(channel) || '',
         },
       });
@@ -652,15 +736,14 @@ module.exports = {
       }
       recentByChannel.set(channel, settled);
 
-      const promptText = extractUserText(event && event.messages);
-      const assistantText = extractAssistantText(event && event.messages);
       const payload = buildActivityPayload({
         sessionKey: settled.sessionKey,
         model: settled.model,
         tokensIn: settled.tokensIn,
         tokensOut: settled.tokensOut,
         durationMs: settled.durationMs,
-        projectTag: configuredProjectTag || settled.projectTag,
+        projectTag: settled.projectTag,
+        projectReason: settled.projectReason,
         channel,
         userId: configuredUserId || userByChannel.get(channel) || settled.userId,
         status: statusFromSuccess(event && event.success),
@@ -686,6 +769,7 @@ module.exports = {
   channelKeyFromContext,
   extractUsage,
   resolveUserId,
+  resolveProjectContext,
   extractCognition,
   coalesceSnapshot,
   settleSnapshot,

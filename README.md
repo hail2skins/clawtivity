@@ -151,6 +151,11 @@ Behavior:
 - captures assistant turn outcomes (`success` / `failed`) and best-effort model/token usage
 - posts normalized JSON directly to `POST /api/activity` via in-plugin JS
 - on API outage, writes fallback payloads to local queue markdown files
+- resolves `project_tag` deterministically with this order:
+  1. prompt override (`project: NAME` or `work on project NAME`)
+  2. workspace path (`/project/NAME/...` or `/projects/NAME/...`)
+  3. plugin config `projectTag`
+  4. fallback `workspace`
 
 Optional plugin config fields (in OpenClaw plugin config):
 - `apiUrl` (default `http://localhost:18730/api/activity`)
@@ -258,6 +263,7 @@ Fields:
 - `cost_estimate`
 - `duration_ms`
 - `project_tag` (indexed)
+- `project_reason`
 - `external_ref`
 - `category` (indexed)
 - `category_reason`
@@ -269,6 +275,7 @@ Fields:
 - `created_at`
 
 Field semantics (current):
+- `project_reason`: source of `project_tag` (`prompt_override`, `workspace_path`, `plugin_config`, `fallback:unknown`).
 - `thinking`: placeholder signal for future provider-specific thinking levels; currently low-confidence.
 - `reasoning`: boolean for reasoning enabled/capable at runtime (`true`/`false`), not a proof that reasoning tokens were used.
 

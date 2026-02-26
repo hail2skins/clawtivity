@@ -12,6 +12,7 @@ const {
   extractUsage,
   extractCognition,
   resolveUserId,
+  resolveProjectContext,
   statusFromSuccess,
   coalesceSnapshot,
   settleSnapshot,
@@ -75,6 +76,7 @@ test('buildActivityPayload produces fallback session key when recent context abs
   assert.equal(payload.session_key, 'channel:discord:conv-99');
   assert.equal(payload.status, 'failed');
   assert.equal(payload.project_tag, 'clawtivity');
+  assert.equal(payload.project_reason, 'fallback:unknown');
   assert.equal(payload.created_at, '2026-02-18T00:00:00Z');
 });
 
@@ -115,6 +117,25 @@ test('buildActivityPayload carries text signals for classifier', () => {
 
   assert.equal(payload.prompt_text, 'please research options');
   assert.equal(payload.assistant_text, 'here are the findings');
+});
+
+test('buildActivityPayload carries project_reason', () => {
+  const payload = buildActivityPayload({
+    sessionKey: 's-1',
+    model: 'gpt-5',
+    tokensIn: 1,
+    tokensOut: 1,
+    durationMs: 10,
+    projectTag: 'clawtivity',
+    projectReason: 'workspace_path',
+    channel: 'webchat',
+    userId: 'u-1',
+    status: 'success',
+    toolsUsed: [],
+    nowIso: '2026-02-18T00:00:00Z',
+  });
+
+  assert.equal(payload.project_reason, 'workspace_path');
 });
 
 test('buildActivityPayload carries thinking and reasoning fields', () => {
@@ -171,6 +192,26 @@ test('resolveUserId falls back to channel/session identity', () => {
   assert.equal(resolveUserId('', 'webchat', 'agent:main:main'), 'webchat:agent:main:main');
   assert.equal(resolveUserId('', 'discord', ''), 'discord:agent:main');
   assert.equal(resolveUserId('telegram:123', 'telegram', 'agent:main:main'), 'telegram:123');
+});
+
+test('resolveProjectContext uses prompt override first', () => {
+  const got = resolveProjectContext({
+    promptText: 'Work on project CLAW-XYZ and do the next steps.',
+    workspaceDir: '/Users/art/.openclaw/workspace/projects/clawtivity',
+    configuredProjectTag: 'override',
+  });
+  assert.equal(got.projectTag, 'claw-xyz');
+  assert.equal(got.projectReason, 'prompt_override');
+});
+
+test('resolveProjectContext uses /projects folder name when prompt override missing', () => {
+  const got = resolveProjectContext({
+    promptText: 'Please proceed.',
+    workspaceDir: '/Users/art/.openclaw/workspace/projects/clawtivity/internal/server',
+    configuredProjectTag: '',
+  });
+  assert.equal(got.projectTag, 'clawtivity');
+  assert.equal(got.projectReason, 'workspace_path');
 });
 
 test('extractUsage supports multiple event usage shapes', () => {

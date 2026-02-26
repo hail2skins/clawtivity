@@ -19,6 +19,9 @@ func normalizeActivity(activity *database.ActivityFeed) {
 	if strings.TrimSpace(activity.ProjectTag) == "" {
 		activity.ProjectTag = "unknown-project"
 	}
+	if strings.TrimSpace(activity.ProjectReason) == "" {
+		activity.ProjectReason = "fallback:unknown"
+	}
 	if strings.TrimSpace(activity.Channel) == "" {
 		activity.Channel = "unknown-channel"
 	}

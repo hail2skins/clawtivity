@@ -25,6 +25,7 @@ func TestPostActivityCreatesEntry(t *testing.T) {
 		"cost_estimate": 0.12,
 		"duration_ms":   int64(1234),
 		"project_tag":   "proj-alpha",
+		"project_reason":"prompt_override",
 		"external_ref":  "CLAW-4",
 		"category":      "code",
 		"thinking":      "high",
@@ -49,6 +50,9 @@ func TestPostActivityCreatesEntry(t *testing.T) {
 	}
 	if got.ProjectTag != "proj-alpha" {
 		t.Fatalf("expected project_tag proj-alpha, got %q", got.ProjectTag)
+	}
+	if got.ProjectReason != "prompt_override" {
+		t.Fatalf("expected project_reason prompt_override, got %q", got.ProjectReason)
 	}
 }
 
