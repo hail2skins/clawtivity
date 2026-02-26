@@ -15,6 +15,7 @@ const {
   resolveProjectContext,
   extractMessageText,
   resolvePromptText,
+  cacheInboundPrompt,
   statusFromSuccess,
   coalesceSnapshot,
   settleSnapshot,
@@ -229,6 +230,21 @@ test('resolvePromptText falls back to cached message text', () => {
     cachedPrompt: 'work on project clawtivity now',
   });
   assert.equal(got, 'work on project clawtivity now');
+});
+
+test('cacheInboundPrompt stores prompt even when event.from is missing', () => {
+  const promptByChannel = new Map();
+  const promptBySession = new Map();
+
+  cacheInboundPrompt({
+    event: { text: 'project clawtivity continue' },
+    ctx: { channelId: 'telegram', sessionKey: 'agent:main:main' },
+    promptByChannel,
+    promptBySession,
+  });
+
+  assert.equal(promptByChannel.get('telegram'), 'project clawtivity continue');
+  assert.equal(promptBySession.get('agent:main:main'), 'project clawtivity continue');
 });
 
 test('extractUsage supports multiple event usage shapes', () => {
