@@ -7,6 +7,7 @@ const DEFAULT_BACKOFF_MS = [1000, 2000, 4000];
 const DEFAULT_API_URL = 'http://localhost:18730/api/activity';
 const DEFAULT_QUEUE_ROOT = path.join(os.homedir(), '.clawtivity', 'queue');
 const PROJECT_OVERRIDE_PATTERN = /\bproject\b\s*:?\s*([a-zA-Z0-9][a-zA-Z0-9._-]*)/i;
+const PROJECT_OVERRIDE_STOPWORDS = new Set(['as', 'is', 'was', 'the', 'a', 'an', 'to', 'for']);
 
 function nowIso() {
   return new Date().toISOString();
@@ -113,8 +114,9 @@ function projectFromPrompt(promptText) {
   if (!text) return '';
   const match = text.match(PROJECT_OVERRIDE_PATTERN);
   if (!match || match.length < 2) return '';
-  const candidate = normalizeProjectTag(match[1]);
+  const candidate = normalizeProjectTag(match[1].replace(/[.,;:!?)]}]+$/g, ''));
   if (!candidate) return '';
+  if (PROJECT_OVERRIDE_STOPWORDS.has(candidate)) return '';
   return candidate;
 }
 

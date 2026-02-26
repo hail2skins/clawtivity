@@ -217,6 +217,16 @@ test('resolveProjectContext uses /projects folder name when prompt override miss
   assert.equal(got.projectReason, 'workspace_path');
 });
 
+test('resolveProjectContext ignores connector words after project', () => {
+  const got = resolveProjectContext({
+    promptText: 'it listed the project as override earlier',
+    workspaceDir: '',
+    configuredProjectTag: '',
+  });
+  assert.equal(got.projectTag, 'workspace');
+  assert.equal(got.projectReason, 'fallback:unknown');
+});
+
 test('extractMessageText supports common event text fields', () => {
   assert.equal(extractMessageText({ text: 'project clawtivity please continue' }), 'project clawtivity please continue');
   assert.equal(extractMessageText({ message: 'project clawtivity' }), 'project clawtivity');

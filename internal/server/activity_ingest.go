@@ -10,6 +10,16 @@ import (
 )
 
 var projectOverridePattern = regexp.MustCompile(`(?i)\bproject\b\s*:?\s*([a-z0-9][a-z0-9._-]*)`)
+var projectOverrideStopwords = map[string]struct{}{
+	"as":  {},
+	"is":  {},
+	"was": {},
+	"the": {},
+	"a":   {},
+	"an":  {},
+	"to":  {},
+	"for": {},
+}
 
 type activityIngest struct {
 	database.ActivityFeed
@@ -90,6 +100,9 @@ func extractProjectOverride(text string) string {
 	candidate := strings.ToLower(strings.TrimSpace(match[1]))
 	candidate = strings.Trim(candidate, ".,;:!?)]}\"'")
 	if candidate == "" {
+		return ""
+	}
+	if _, stopword := projectOverrideStopwords[candidate]; stopword {
 		return ""
 	}
 	return candidate
