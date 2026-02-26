@@ -488,6 +488,27 @@ function extractUserText(messages) {
   return '';
 }
 
+function extractMessageText(event) {
+  if (!event || typeof event !== 'object') return '';
+  if (typeof event.text === 'string' && event.text.trim() !== '') return event.text;
+  if (typeof event.message === 'string' && event.message.trim() !== '') return event.message;
+  if (typeof event.content === 'string' && event.content.trim() !== '') return event.content;
+  if (Array.isArray(event.content)) {
+    const textChunk = event.content.find((c) => c && typeof c === 'object' && c.type === 'text' && typeof c.text === 'string');
+    if (textChunk && textChunk.text.trim() !== '') return textChunk.text;
+  }
+  return '';
+}
+
+function resolvePromptText(options = {}) {
+  const { messages, event, cachedPrompt } = options;
+  const fromMessages = extractUserText(messages);
+  if (fromMessages) return fromMessages;
+  const fromEvent = extractMessageText(event);
+  if (fromEvent) return fromEvent;
+  return asString(cachedPrompt, '');
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -632,6 +653,7 @@ module.exports = {
     const recentByChannel = new Map();
     const recentBySession = new Map();
     const userByChannel = new Map();
+    const promptByChannel = new Map();
 
     api.on('llm_output', (event, ctx) => {
       const channel = channelKeyFromContext(ctx, event);
@@ -673,6 +695,10 @@ module.exports = {
       const from = asString(event && event.from, '');
       if (!from) return;
       userByChannel.set(channel, from);
+      const prompt = extractMessageText(event);
+      if (prompt) {
+        promptByChannel.set(channel, prompt);
+      }
     });
 
     api.on('message_sending', (event, ctx) => {
@@ -690,7 +716,11 @@ module.exports = {
       const recent = recentSession || recentChannel || null;
       const usage = extractUsage(event);
       const cognition = extractCognition(event, ctx, recent);
-      const promptText = extractUserText(event && event.messages);
+      const promptText = resolvePromptText({
+        messages: event && event.messages,
+        event,
+        cachedPrompt: promptByChannel.get(channel),
+      });
       const assistantText = extractAssistantText(event && event.messages);
       const project = resolveProjectContext({
         promptText,
@@ -766,6 +796,8 @@ module.exports = {
   shouldUseRecent,
   extractAssistantText,
   extractUserText,
+  extractMessageText,
+  resolvePromptText,
   channelKeyFromContext,
   extractUsage,
   resolveUserId,

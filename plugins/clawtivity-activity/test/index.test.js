@@ -13,6 +13,8 @@ const {
   extractCognition,
   resolveUserId,
   resolveProjectContext,
+  extractMessageText,
+  resolvePromptText,
   statusFromSuccess,
   coalesceSnapshot,
   settleSnapshot,
@@ -212,6 +214,21 @@ test('resolveProjectContext uses /projects folder name when prompt override miss
   });
   assert.equal(got.projectTag, 'clawtivity');
   assert.equal(got.projectReason, 'workspace_path');
+});
+
+test('extractMessageText supports common event text fields', () => {
+  assert.equal(extractMessageText({ text: 'project clawtivity please continue' }), 'project clawtivity please continue');
+  assert.equal(extractMessageText({ message: 'project clawtivity' }), 'project clawtivity');
+  assert.equal(extractMessageText({ content: [{ type: 'text', text: 'project clawtivity' }] }), 'project clawtivity');
+});
+
+test('resolvePromptText falls back to cached message text', () => {
+  const got = resolvePromptText({
+    messages: [],
+    event: { text: '' },
+    cachedPrompt: 'work on project clawtivity now',
+  });
+  assert.equal(got, 'work on project clawtivity now');
 });
 
 test('extractUsage supports multiple event usage shapes', () => {
