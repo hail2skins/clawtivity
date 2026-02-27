@@ -77,7 +77,7 @@ func applyActivityClassification(activity *database.ActivityFeed, signals classi
 	activity.CategoryReason = reason
 }
 
-func applyProjectAssociation(activity *database.ActivityFeed, promptText, _ string) {
+func applyProjectAssociation(activity *database.ActivityFeed, promptText, assistantText string) {
 	if activity == nil {
 		return
 	}
@@ -85,6 +85,9 @@ func applyProjectAssociation(activity *database.ActivityFeed, promptText, _ stri
 	candidate := extractProjectOverride(promptText)
 	if candidate == "" {
 		candidate = extractProjectPathMention(promptText)
+		if candidate == "" {
+			candidate = extractProjectPathMention(assistantText)
+		}
 		if candidate != "" {
 			activity.ProjectTag = candidate
 			activity.ProjectReason = "prompt_path_mention"

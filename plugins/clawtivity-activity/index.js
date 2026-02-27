@@ -387,6 +387,17 @@ function coalesceSnapshot(params) {
   const currentReasoning = asBool(safeCurrent.reasoning, undefined);
   const priorReasoning = asBool(safePrior.reasoning, false);
 
+  const currentProjectTag = asString(safeCurrent.projectTag, '');
+  const priorProjectTag = asString(safePrior.projectTag, 'workspace');
+  const currentProjectReason = asString(safeCurrent.projectReason, '');
+  const priorProjectReason = asString(safePrior.projectReason, 'fallback:unknown');
+
+  const usePriorProject =
+    currentProjectTag === 'workspace'
+    && currentProjectReason === 'fallback:unknown'
+    && priorProjectTag !== ''
+    && priorProjectTag !== 'workspace';
+
   return {
     ts: Date.now(),
     sessionKey: asString(safeCurrent.sessionKey, asString(safePrior.sessionKey, '')),
@@ -396,8 +407,8 @@ function coalesceSnapshot(params) {
     durationMs: Math.max(asInt(safeCurrent.durationMs, 0), asInt(safePrior.durationMs, 0)),
     thinking: currentThinking || priorThinking || 'low',
     reasoning: currentReasoning === undefined ? priorReasoning : currentReasoning,
-    projectTag: asString(safeCurrent.projectTag, asString(safePrior.projectTag, 'workspace')),
-    projectReason: asString(safeCurrent.projectReason, asString(safePrior.projectReason, 'fallback:unknown')),
+    projectTag: usePriorProject ? priorProjectTag : asString(currentProjectTag, priorProjectTag),
+    projectReason: usePriorProject ? priorProjectReason : asString(currentProjectReason, priorProjectReason),
     userId: resolveUserId(
       asString(safeCurrent.userId, asString(safePrior.userId, '')),
       asString(safeCurrent.channel, asString(safePrior.channel, 'unknown-channel')),

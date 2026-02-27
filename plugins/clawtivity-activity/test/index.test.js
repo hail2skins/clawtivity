@@ -417,6 +417,34 @@ test('coalesceSnapshot keeps prior model/tokens when current event is empty', ()
   assert.equal(got.reasoning, true);
 });
 
+test('coalesceSnapshot keeps prior non-workspace project when current falls back', () => {
+  const got = coalesceSnapshot({
+    prior: {
+      sessionKey: 'agent:main:main',
+      model: 'moonshotai/kimi-k2.5',
+      tokensIn: 100,
+      tokensOut: 20,
+      durationMs: 1000,
+      projectTag: 'clawtivity',
+      projectReason: 'prompt_path_mention',
+      userId: 'telegram:1',
+    },
+    current: {
+      sessionKey: 'agent:main:main',
+      model: 'moonshotai/kimi-k2.5',
+      tokensIn: 110,
+      tokensOut: 30,
+      durationMs: 1200,
+      projectTag: 'workspace',
+      projectReason: 'fallback:unknown',
+      userId: 'telegram:1',
+    },
+  });
+
+  assert.equal(got.projectTag, 'clawtivity');
+  assert.equal(got.projectReason, 'prompt_path_mention');
+});
+
 test('coalesceSnapshot adopts stronger current usage/model values', () => {
   const got = coalesceSnapshot({
     prior: {
