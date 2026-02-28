@@ -3,6 +3,9 @@ package database
 import (
 	"path/filepath"
 	"testing"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
@@ -260,6 +263,80 @@ func TestProjectUpsertAndList(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected clawtivity project to be listed")
+	}
+}
+
+func TestNewSQLiteAdapterBackfillsLegacyProjectTagWithoutLock(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy-clawtivity.db")
+
+	legacyDB, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("expected legacy db open to succeed: %v", err)
+	}
+
+	if err := legacyDB.Exec(`
+		CREATE TABLE activity_feed (
+			id TEXT PRIMARY KEY,
+			session_key TEXT,
+			model TEXT,
+			tokens_in INTEGER,
+			tokens_out INTEGER,
+			cost_estimate REAL,
+			duration_ms INTEGER,
+			project_tag TEXT,
+			project_reason TEXT,
+			external_ref TEXT,
+			category TEXT,
+			category_reason TEXT,
+			thinking TEXT,
+			reasoning NUMERIC,
+			channel TEXT,
+			status TEXT,
+			user_id TEXT,
+			created_at DATETIME
+		)
+	`).Error; err != nil {
+		t.Fatalf("expected legacy schema create to succeed: %v", err)
+	}
+
+	if err := legacyDB.Exec(`
+		INSERT INTO activity_feed (
+			id, session_key, model, tokens_in, tokens_out, cost_estimate, duration_ms,
+			project_tag, project_reason, external_ref, category, category_reason,
+			thinking, reasoning, channel, status, user_id, created_at
+		) VALUES (
+			'legacy-1', 'session-legacy', 'gpt-5', 10, 5, 0.0, 1000,
+			'clawtivity', 'workspace_path', '', 'general', '',
+			'medium', 0, 'webchat', 'success', 'legacy-user', datetime('now')
+		)
+	`).Error; err != nil {
+		t.Fatalf("expected legacy row insert to succeed: %v", err)
+	}
+
+	adapter, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected adapter migration to succeed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = adapter.Close()
+	})
+
+	svc := adapter.(*service)
+
+	var activity ActivityFeed
+	if err := svc.db.First(&activity, "id = ?", "legacy-1").Error; err != nil {
+		t.Fatalf("expected legacy activity to be readable: %v", err)
+	}
+	if activity.ProjectID == "" {
+		t.Fatal("expected legacy activity project_id to be backfilled")
+	}
+
+	var project Project
+	if err := svc.db.First(&project, "id = ?", activity.ProjectID).Error; err != nil {
+		t.Fatalf("expected related project to exist: %v", err)
+	}
+	if project.Slug != "clawtivity" {
+		t.Fatalf("expected slug clawtivity, got %q", project.Slug)
 	}
 }
 

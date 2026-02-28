@@ -22,26 +22,27 @@ var ErrInvalidDateFilter = errors.New("invalid date filter: expected YYYY-MM-DD"
 
 // ActivityFeed is the local-first event ledger entry.
 type ActivityFeed struct {
-	ID             string    `gorm:"type:char(36);primaryKey" json:"id"`
-	SessionKey     string    `gorm:"index:idx_activity_feed_session_key" json:"session_key"`
-	Model          string    `json:"model"`
-	TokensIn       int       `json:"tokens_in"`
-	TokensOut      int       `json:"tokens_out"`
-	CostEstimate   float64   `json:"cost_estimate"`
-	DurationMS     int64     `json:"duration_ms"`
-	ProjectID      string    `gorm:"type:char(36);index:idx_activity_feed_project_id" json:"project_id"`
-	Project        Project   `gorm:"foreignKey:ProjectID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;" json:"-"`
-	ProjectTag     string    `gorm:"-" json:"project_tag"`
-	ProjectReason  string    `json:"project_reason"`
-	ExternalRef    string    `json:"external_ref"`
-	Category       string    `gorm:"index:idx_activity_feed_category" json:"category"`
-	CategoryReason string    `json:"category_reason"`
-	Thinking       string    `json:"thinking"`
-	Reasoning      bool      `json:"reasoning"`
-	Channel        string    `json:"channel"`
-	Status         string    `gorm:"index:idx_activity_feed_status" json:"status"`
-	UserID         string    `gorm:"index:idx_activity_feed_user_id" json:"user_id"`
-	CreatedAt      time.Time `gorm:"autoCreateTime" json:"created_at"`
+	ID               string    `gorm:"type:char(36);primaryKey" json:"id"`
+	SessionKey       string    `gorm:"index:idx_activity_feed_session_key" json:"session_key"`
+	Model            string    `json:"model"`
+	TokensIn         int       `json:"tokens_in"`
+	TokensOut        int       `json:"tokens_out"`
+	CostEstimate     float64   `json:"cost_estimate"`
+	DurationMS       int64     `json:"duration_ms"`
+	ProjectID        string    `gorm:"type:char(36);index:idx_activity_feed_project_id" json:"project_id"`
+	Project          Project   `gorm:"foreignKey:ProjectID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;" json:"-"`
+	LegacyProjectTag string    `gorm:"column:project_tag" json:"-"`
+	ProjectTag       string    `gorm:"-" json:"project_tag"`
+	ProjectReason    string    `json:"project_reason"`
+	ExternalRef      string    `json:"external_ref"`
+	Category         string    `gorm:"index:idx_activity_feed_category" json:"category"`
+	CategoryReason   string    `json:"category_reason"`
+	Thinking         string    `json:"thinking"`
+	Reasoning        bool      `json:"reasoning"`
+	Channel          string    `json:"channel"`
+	Status           string    `gorm:"index:idx_activity_feed_status" json:"status"`
+	UserID           string    `gorm:"index:idx_activity_feed_user_id" json:"user_id"`
+	CreatedAt        time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
 
 func (ActivityFeed) TableName() string {
@@ -186,11 +187,16 @@ func newSQLiteService(dsn string) (*service, error) {
 		return nil, err
 	}
 
+	legacyProjectTags, err := loadLegacyProjectTags(context.Background(), gormDB)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := gormDB.AutoMigrate(&Project{}, &ActivityFeed{}, &TurnMemory{}); err != nil {
 		return nil, err
 	}
 
-	if err := synchronizeActivityProjectIDs(context.Background(), gormDB); err != nil {
+	if err := synchronizeActivityProjectIDs(context.Background(), gormDB, legacyProjectTags); err != nil {
 		return nil, err
 	}
 
@@ -248,6 +254,7 @@ func (s *service) CreateActivity(ctx context.Context, activity *ActivityFeed) er
 	if strings.TrimSpace(activity.ProjectID) == "" {
 		return errors.New("project_id is required")
 	}
+	activity.LegacyProjectTag = strings.TrimSpace(strings.ToLower(activity.ProjectTag))
 	return s.db.WithContext(ctx).Create(activity).Error
 }
 
@@ -443,28 +450,47 @@ func populateProjectTags(activities []ActivityFeed) {
 	}
 }
 
-func synchronizeActivityProjectIDs(ctx context.Context, db *gorm.DB) error {
+func synchronizeActivityProjectIDs(ctx context.Context, db *gorm.DB, legacyProjectTags map[string]string) error {
 	workspace, err := upsertProjectRecord(ctx, db, "workspace", "workspace")
 	if err != nil {
 		return err
 	}
 
-	if db.Migrator().HasColumn(&ActivityFeed{}, "project_tag") {
-		rows, err := db.WithContext(ctx).Raw(
-			"SELECT DISTINCT project_tag FROM activity_feed WHERE project_id IS NULL OR TRIM(project_id) = ''",
-		).Rows()
+	for activityID, rawTag := range legacyProjectTags {
+		normalized := normalizeProjectSlug(rawTag)
+		if normalized == "" {
+			normalized = "workspace"
+		}
+		project, err := upsertProjectRecord(ctx, db, normalized, normalized)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		if err := db.WithContext(ctx).Exec(
+			`UPDATE activity_feed
+			 SET project_id = ?
+			 WHERE id = ?
+			   AND (project_id IS NULL OR TRIM(project_id) = '')`,
+			project.ID,
+			activityID,
+		).Error; err != nil {
+			return err
+		}
+	}
 
-		for rows.Next() {
-			var tag sql.NullString
-			if err := rows.Scan(&tag); err != nil {
-				return err
-			}
+	if tableHasColumn(ctx, db, "activity_feed", "project_tag") {
+		var tagRows []struct {
+			Tag string `gorm:"column:tag"`
+		}
+		if err := db.WithContext(ctx).Raw(
+			`SELECT DISTINCT lower(trim(coalesce(project_tag, ''))) AS tag
+			 FROM activity_feed
+			 WHERE project_id IS NULL OR TRIM(project_id) = ''`,
+		).Scan(&tagRows).Error; err != nil {
+			return err
+		}
 
-			normalized := normalizeProjectSlug(tag.String)
+		for _, row := range tagRows {
+			normalized := normalizeProjectSlug(row.Tag)
 			if normalized == "" {
 				normalized = "workspace"
 			}
@@ -518,4 +544,66 @@ func upsertProjectRecord(ctx context.Context, db *gorm.DB, slug, displayName str
 		return Project{}, err
 	}
 	return project, nil
+}
+
+func tableHasColumn(ctx context.Context, db *gorm.DB, tableName, columnName string) bool {
+	if strings.TrimSpace(tableName) == "" || strings.TrimSpace(columnName) == "" {
+		return false
+	}
+
+	var count int64
+	if err := db.WithContext(ctx).Raw(
+		fmt.Sprintf("SELECT COUNT(*) FROM pragma_table_info(%q) WHERE name = ?", tableName),
+		columnName,
+	).Scan(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
+}
+
+func tableExists(ctx context.Context, db *gorm.DB, tableName string) bool {
+	if strings.TrimSpace(tableName) == "" {
+		return false
+	}
+
+	var count int64
+	if err := db.WithContext(ctx).Raw(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+		tableName,
+	).Scan(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
+}
+
+func loadLegacyProjectTags(ctx context.Context, db *gorm.DB) (map[string]string, error) {
+	result := map[string]string{}
+	if !tableExists(ctx, db, "activity_feed") {
+		return result, nil
+	}
+	if !tableHasColumn(ctx, db, "activity_feed", "id") || !tableHasColumn(ctx, db, "activity_feed", "project_tag") {
+		return result, nil
+	}
+
+	var rows []struct {
+		ID  string `gorm:"column:id"`
+		Tag string `gorm:"column:tag"`
+	}
+	if err := db.WithContext(ctx).Raw(
+		`SELECT id, lower(trim(coalesce(project_tag, ''))) AS tag
+		 FROM activity_feed
+		 WHERE trim(coalesce(project_tag, '')) <> ''`,
+	).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		id := strings.TrimSpace(row.ID)
+		if id == "" {
+			continue
+		}
+		result[id] = normalizeProjectSlug(row.Tag)
+	}
+
+	return result, nil
 }
