@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -76,6 +77,27 @@ func (m *TurnMemory) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
+// Project stores known project tags for deterministic project assignment.
+type Project struct {
+	ID          string    `gorm:"type:char(36);primaryKey" json:"id"`
+	Slug        string    `gorm:"uniqueIndex:idx_projects_slug" json:"slug"`
+	DisplayName string    `json:"display_name"`
+	Status      string    `gorm:"index:idx_projects_status" json:"status"`
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+func (Project) TableName() string {
+	return "projects"
+}
+
+func (p *Project) BeforeCreate(_ *gorm.DB) error {
+	if p.ID == "" {
+		p.ID = generateUUIDv4()
+	}
+	return nil
+}
+
 // Service represents a service that interacts with a database.
 type Service interface {
 	// Health returns a map of health status information.
@@ -84,6 +106,9 @@ type Service interface {
 	CreateActivity(ctx context.Context, activity *ActivityFeed) error
 	ListActivities(ctx context.Context, filters ActivityFilters) ([]ActivityFeed, error)
 	SummarizeActivities(ctx context.Context, filters ActivityFilters) (ActivitySummary, error)
+	UpsertProject(ctx context.Context, slug, displayName string) (Project, error)
+	ListProjects(ctx context.Context, status string) ([]Project, error)
+	ListProjectsWithStats(ctx context.Context, status string) ([]ProjectSummary, error)
 
 	// Close terminates the database connection.
 	Close() error
@@ -102,6 +127,19 @@ type ActivitySummary struct {
 	CostTotal       float64        `gorm:"column:cost_total" json:"cost_total"`
 	DurationMSTotal int64          `gorm:"column:duration_ms_total" json:"duration_ms_total"`
 	ByStatus        map[string]int `json:"by_status"`
+}
+
+type ProjectSummary struct {
+	ID             string    `json:"id"`
+	Slug           string    `json:"slug"`
+	DisplayName    string    `json:"display_name"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	ActivityCount  int64     `json:"activity_count"`
+	TokensInTotal  int64     `json:"tokens_in_total"`
+	TokensOutTotal int64     `json:"tokens_out_total"`
+	CostTotal      float64   `json:"cost_total"`
 }
 
 type service struct {
@@ -146,7 +184,7 @@ func newSQLiteService(dsn string) (*service, error) {
 		return nil, err
 	}
 
-	if err := gormDB.AutoMigrate(&ActivityFeed{}, &TurnMemory{}); err != nil {
+	if err := gormDB.AutoMigrate(&ActivityFeed{}, &TurnMemory{}, &Project{}); err != nil {
 		return nil, err
 	}
 
@@ -269,6 +307,73 @@ func (s *service) SummarizeActivities(ctx context.Context, filters ActivityFilte
 	return summary, nil
 }
 
+func (s *service) UpsertProject(ctx context.Context, slug, displayName string) (Project, error) {
+	normalizedSlug := normalizeProjectSlug(slug)
+	if normalizedSlug == "" {
+		return Project{}, errors.New("project slug cannot be empty")
+	}
+
+	project := Project{
+		Slug:        normalizedSlug,
+		DisplayName: strings.TrimSpace(displayName),
+		Status:      "active",
+	}
+	if project.DisplayName == "" {
+		project.DisplayName = normalizedSlug
+	}
+
+	if err := s.db.WithContext(ctx).Where("slug = ?", normalizedSlug).FirstOrCreate(&project).Error; err != nil {
+		return Project{}, err
+	}
+
+	if strings.TrimSpace(displayName) != "" && project.DisplayName != strings.TrimSpace(displayName) {
+		project.DisplayName = strings.TrimSpace(displayName)
+		if err := s.db.WithContext(ctx).Save(&project).Error; err != nil {
+			return Project{}, err
+		}
+	}
+
+	return project, nil
+}
+
+func (s *service) ListProjects(ctx context.Context, status string) ([]Project, error) {
+	tx := s.db.WithContext(ctx).Model(&Project{})
+	if trimmed := strings.TrimSpace(status); trimmed != "" {
+		tx = tx.Where("status = ?", trimmed)
+	}
+
+	var projects []Project
+	if err := tx.Order("slug asc").Find(&projects).Error; err != nil {
+		return nil, err
+	}
+	return projects, nil
+}
+
+func (s *service) ListProjectsWithStats(ctx context.Context, status string) ([]ProjectSummary, error) {
+	tx := s.db.WithContext(ctx).
+		Table("projects AS p").
+		Select(
+			"p.id, p.slug, p.display_name, p.status, p.created_at, p.updated_at, " +
+				"COUNT(a.id) AS activity_count, " +
+				"COALESCE(SUM(a.tokens_in), 0) AS tokens_in_total, " +
+				"COALESCE(SUM(a.tokens_out), 0) AS tokens_out_total, " +
+				"COALESCE(SUM(a.cost_estimate), 0) AS cost_total",
+		).
+		Joins("LEFT JOIN activity_feed AS a ON a.project_tag = p.slug").
+		Group("p.id, p.slug, p.display_name, p.status, p.created_at, p.updated_at").
+		Order("p.slug asc")
+
+	if trimmed := strings.TrimSpace(status); trimmed != "" {
+		tx = tx.Where("p.status = ?", trimmed)
+	}
+
+	var rows []ProjectSummary
+	if err := tx.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // Close closes the database connection.
 func (s *service) Close() error {
 	log.Printf("Disconnected from database: %s", dburl)
@@ -309,4 +414,8 @@ func generateUUIDv4() string {
 		b[8:10],
 		b[10:16],
 	)
+}
+
+func normalizeProjectSlug(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }

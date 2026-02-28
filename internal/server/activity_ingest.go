@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -100,6 +101,17 @@ func applyProjectAssociation(activity *database.ActivityFeed, promptText, assist
 
 	activity.ProjectTag = candidate
 	activity.ProjectReason = "prompt_override"
+}
+
+func ensureProjectRegistry(ctx context.Context, db database.Service, projectTag string) {
+	if db == nil {
+		return
+	}
+	tag := strings.TrimSpace(strings.ToLower(projectTag))
+	if tag == "" || tag == "workspace" || tag == "unknown-project" {
+		return
+	}
+	_, _ = db.UpsertProject(ctx, tag, tag)
 }
 
 func extractProjectOverride(text string) string {

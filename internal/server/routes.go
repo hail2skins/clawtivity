@@ -29,6 +29,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.POST("/api/activity", s.createActivityHandler)
 	r.GET("/api/activity", s.listActivitiesHandler)
 	r.GET("/api/activity/summary", s.activitySummaryHandler)
+	r.GET("/api/projects", s.listProjectsHandler)
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	staticFiles, _ := fs.Sub(web.Files, "assets")

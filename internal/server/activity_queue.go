@@ -83,6 +83,7 @@ func flushQueuedActivities(ctx context.Context, db database.Service, queueDir st
 			activity := entry.ingest.ActivityFeed
 			normalizeActivity(&activity)
 			applyProjectAssociation(&activity, entry.ingest.PromptText, entry.ingest.AssistantText)
+			ensureProjectRegistry(ctx, db, activity.ProjectTag)
 			applyActivityClassification(&activity, classifier.Signals{
 				PromptText:    entry.ingest.PromptText,
 				AssistantText: entry.ingest.AssistantText,

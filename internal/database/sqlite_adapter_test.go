@@ -27,6 +27,9 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 	if !svc.db.Migrator().HasTable(&TurnMemory{}) {
 		t.Fatal("expected turn_memories table to exist")
 	}
+	if !svc.db.Migrator().HasTable(&Project{}) {
+		t.Fatal("expected projects table to exist")
+	}
 
 	if !svc.db.Migrator().HasIndex(&ActivityFeed{}, "idx_activity_feed_session_key") {
 		t.Fatal("expected activity_feed.session_key index to exist")
@@ -45,6 +48,9 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 	}
 	if !svc.db.Migrator().HasIndex(&TurnMemory{}, "idx_turn_memories_session_key") {
 		t.Fatal("expected turn_memories.session_key index to exist")
+	}
+	if !svc.db.Migrator().HasIndex(&Project{}, "idx_projects_slug") {
+		t.Fatal("expected projects.slug index to exist")
 	}
 
 	assertColumnsPresent(t, svc, &ActivityFeed{}, []string{
@@ -78,6 +84,15 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 		"context_snippet",
 		"tags",
 		"created_at",
+	})
+
+	assertColumnsPresent(t, svc, &Project{}, []string{
+		"id",
+		"slug",
+		"display_name",
+		"status",
+		"created_at",
+		"updated_at",
 	})
 }
 
@@ -198,6 +213,40 @@ func TestActivityFeedPersistsNewFields(t *testing.T) {
 	}
 	if fetched.UserID != created.UserID {
 		t.Fatalf("expected user_id %q, got %q", created.UserID, fetched.UserID)
+	}
+}
+
+func TestProjectUpsertAndList(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
+
+	adapter, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected adapter to initialize: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = adapter.Close()
+	})
+
+	project, err := adapter.UpsertProject(t.Context(), "clawtivity", "Clawtivity")
+	if err != nil {
+		t.Fatalf("expected upsert to succeed: %v", err)
+	}
+	if project.Slug != "clawtivity" {
+		t.Fatalf("expected slug clawtivity, got %q", project.Slug)
+	}
+
+	// Idempotent upsert should not duplicate rows.
+	_, err = adapter.UpsertProject(t.Context(), "clawtivity", "Clawtivity")
+	if err != nil {
+		t.Fatalf("expected idempotent upsert to succeed: %v", err)
+	}
+
+	projects, err := adapter.ListProjects(t.Context(), "active")
+	if err != nil {
+		t.Fatalf("expected list to succeed: %v", err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("expected exactly 1 project, got %d", len(projects))
 	}
 }
 

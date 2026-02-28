@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"clawtivity/internal/classifier"
 	"clawtivity/internal/database"
@@ -40,6 +41,7 @@ func (s *Server) createActivityHandler(c *gin.Context) {
 		AssistantText: input.AssistantText,
 		ToolsUsed:     input.ToolsUsed,
 	})
+	ensureProjectRegistry(c.Request.Context(), s.db, input.ActivityFeed.ProjectTag)
 
 	if err := s.db.CreateActivity(c.Request.Context(), &input.ActivityFeed); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create activity"})
@@ -111,4 +113,37 @@ func (s *Server) activitySummaryHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, summary)
+}
+
+// listProjectsHandler godoc
+// @Summary List projects
+// @Description List known projects with optional status filter and aggregated stats.
+// @Tags projects
+// @Produce json
+// @Param status query string false "Filter by project status (active, archived)"
+// @Param include_stats query bool false "Include activity aggregates"
+// @Success 200 {array} database.Project
+// @Failure 500 {object} APIError
+// @Router /api/projects [get]
+func (s *Server) listProjectsHandler(c *gin.Context) {
+	status := c.Query("status")
+	includeStats := strings.EqualFold(c.Query("include_stats"), "true")
+
+	if includeStats {
+		projects, err := s.db.ListProjectsWithStats(c.Request.Context(), status)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list projects"})
+			return
+		}
+		c.JSON(http.StatusOK, projects)
+		return
+	}
+
+	projects, err := s.db.ListProjects(c.Request.Context(), status)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list projects"})
+		return
+	}
+
+	c.JSON(http.StatusOK, projects)
 }

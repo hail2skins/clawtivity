@@ -18,21 +18,21 @@ func TestPostActivityCreatesEntry(t *testing.T) {
 	defer cleanup()
 
 	payload := map[string]any{
-		"session_key":   "session-1",
-		"model":         "gpt-5",
-		"tokens_in":     120,
-		"tokens_out":    80,
-		"cost_estimate": 0.12,
-		"duration_ms":   int64(1234),
-		"project_tag":   "proj-alpha",
-		"project_reason":"prompt_override",
-		"external_ref":  "CLAW-4",
-		"category":      "code",
-		"thinking":      "high",
-		"reasoning":     true,
-		"channel":       "discord",
-		"status":        "success",
-		"user_id":       "art",
+		"session_key":    "session-1",
+		"model":          "gpt-5",
+		"tokens_in":      120,
+		"tokens_out":     80,
+		"cost_estimate":  0.12,
+		"duration_ms":    int64(1234),
+		"project_tag":    "proj-alpha",
+		"project_reason": "prompt_override",
+		"external_ref":   "CLAW-4",
+		"category":       "code",
+		"thinking":       "high",
+		"reasoning":      true,
+		"channel":        "discord",
+		"status":         "success",
+		"user_id":        "art",
 	}
 
 	rr := performJSON(t, handler, http.MethodPost, "/api/activity", payload)
@@ -523,6 +523,46 @@ func TestGetActivitySummaryAggregatesStats(t *testing.T) {
 	}
 	if got.ByStatus["success"] != 1 || got.ByStatus["failed"] != 1 {
 		t.Fatalf("expected by_status success=1 failed=1, got %#v", got.ByStatus)
+	}
+}
+
+func TestGetProjectsListsRegistryWithStats(t *testing.T) {
+	handler, cleanup := newTestHandler(t)
+	defer cleanup()
+
+	createActivity(t, handler, map[string]any{
+		"session_key":    "session-p-1",
+		"model":          "gpt-5",
+		"tokens_in":      100,
+		"tokens_out":     20,
+		"cost_estimate":  0.1,
+		"duration_ms":    int64(500),
+		"project_tag":    "clawtivity",
+		"project_reason": "prompt_override",
+		"channel":        "telegram",
+		"status":         "success",
+		"user_id":        "u1",
+	})
+
+	req, err := http.NewRequest(http.MethodGet, "/api/projects?include_stats=true", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, rr.Code, rr.Body.String())
+	}
+
+	var got []map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("expected valid json response: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("expected at least one project")
+	}
+	if got[0]["slug"] == "" {
+		t.Fatal("expected project slug")
 	}
 }
 
