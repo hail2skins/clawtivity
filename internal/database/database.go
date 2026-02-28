@@ -29,7 +29,9 @@ type ActivityFeed struct {
 	TokensOut      int       `json:"tokens_out"`
 	CostEstimate   float64   `json:"cost_estimate"`
 	DurationMS     int64     `json:"duration_ms"`
-	ProjectTag     string    `gorm:"index:idx_activity_feed_project_tag" json:"project_tag"`
+	ProjectID      string    `gorm:"type:char(36);index:idx_activity_feed_project_id" json:"project_id"`
+	Project        Project   `gorm:"foreignKey:ProjectID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;" json:"-"`
+	ProjectTag     string    `gorm:"-" json:"project_tag"`
 	ProjectReason  string    `json:"project_reason"`
 	ExternalRef    string    `json:"external_ref"`
 	Category       string    `gorm:"index:idx_activity_feed_category" json:"category"`
@@ -184,7 +186,11 @@ func newSQLiteService(dsn string) (*service, error) {
 		return nil, err
 	}
 
-	if err := gormDB.AutoMigrate(&ActivityFeed{}, &TurnMemory{}, &Project{}); err != nil {
+	if err := gormDB.AutoMigrate(&Project{}, &ActivityFeed{}, &TurnMemory{}); err != nil {
+		return nil, err
+	}
+
+	if err := synchronizeActivityProjectIDs(context.Background(), gormDB); err != nil {
 		return nil, err
 	}
 
@@ -239,6 +245,9 @@ func (s *service) Health() map[string]string {
 }
 
 func (s *service) CreateActivity(ctx context.Context, activity *ActivityFeed) error {
+	if strings.TrimSpace(activity.ProjectID) == "" {
+		return errors.New("project_id is required")
+	}
 	return s.db.WithContext(ctx).Create(activity).Error
 }
 
@@ -249,9 +258,10 @@ func (s *service) ListActivities(ctx context.Context, filters ActivityFilters) (
 	}
 
 	var activities []ActivityFeed
-	if err := tx.Order("created_at desc").Find(&activities).Error; err != nil {
+	if err := tx.Preload("Project").Order("activity_feed.created_at desc").Find(&activities).Error; err != nil {
 		return nil, err
 	}
+	populateProjectTags(activities)
 	return activities, nil
 }
 
@@ -270,7 +280,11 @@ func (s *service) SummarizeActivities(ctx context.Context, filters ActivityFilte
 		DurationMSTotal int64   `gorm:"column:duration_ms_total" json:"duration_ms_total"`
 	}
 	if err := tx.Select(
-		"COUNT(*) AS count, COALESCE(SUM(tokens_in), 0) AS tokens_in_total, COALESCE(SUM(tokens_out), 0) AS tokens_out_total, COALESCE(SUM(cost_estimate), 0) AS cost_total, COALESCE(SUM(duration_ms), 0) AS duration_ms_total",
+		"COUNT(*) AS count, " +
+			"COALESCE(SUM(activity_feed.tokens_in), 0) AS tokens_in_total, " +
+			"COALESCE(SUM(activity_feed.tokens_out), 0) AS tokens_out_total, " +
+			"COALESCE(SUM(activity_feed.cost_estimate), 0) AS cost_total, " +
+			"COALESCE(SUM(activity_feed.duration_ms), 0) AS duration_ms_total",
 	).Scan(&result).Error; err != nil {
 		return ActivitySummary{}, err
 	}
@@ -292,7 +306,7 @@ func (s *service) SummarizeActivities(ctx context.Context, filters ActivityFilte
 		Status string
 		Count  int64
 	}
-	if err := statusTx.Select("status, COUNT(*) AS count").Group("status").Scan(&grouped).Error; err != nil {
+	if err := statusTx.Select("activity_feed.status AS status, COUNT(*) AS count").Group("activity_feed.status").Scan(&grouped).Error; err != nil {
 		return ActivitySummary{}, err
 	}
 
@@ -359,7 +373,7 @@ func (s *service) ListProjectsWithStats(ctx context.Context, status string) ([]P
 				"COALESCE(SUM(a.tokens_out), 0) AS tokens_out_total, " +
 				"COALESCE(SUM(a.cost_estimate), 0) AS cost_total",
 		).
-		Joins("LEFT JOIN activity_feed AS a ON a.project_tag = p.slug").
+		Joins("LEFT JOIN activity_feed AS a ON a.project_id = p.id").
 		Group("p.id, p.slug, p.display_name, p.status, p.created_at, p.updated_at").
 		Order("p.slug asc")
 
@@ -382,10 +396,11 @@ func (s *service) Close() error {
 
 func applyActivityFilters(tx *gorm.DB, filters ActivityFilters) (*gorm.DB, error) {
 	if filters.ProjectTag != "" {
-		tx = tx.Where("project_tag = ?", filters.ProjectTag)
+		tx = tx.Joins("JOIN projects ON projects.id = activity_feed.project_id")
+		tx = tx.Where("projects.slug = ?", normalizeProjectSlug(filters.ProjectTag))
 	}
 	if filters.Model != "" {
-		tx = tx.Where("model = ?", filters.Model)
+		tx = tx.Where("activity_feed.model = ?", filters.Model)
 	}
 	if filters.Date != "" {
 		start, err := time.Parse("2006-01-02", filters.Date)
@@ -393,7 +408,7 @@ func applyActivityFilters(tx *gorm.DB, filters ActivityFilters) (*gorm.DB, error
 			return nil, ErrInvalidDateFilter
 		}
 		end := start.Add(24 * time.Hour)
-		tx = tx.Where("created_at >= ? AND created_at < ?", start, end)
+		tx = tx.Where("activity_feed.created_at >= ? AND activity_feed.created_at < ?", start, end)
 	}
 	return tx, nil
 }
@@ -418,4 +433,89 @@ func generateUUIDv4() string {
 
 func normalizeProjectSlug(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func populateProjectTags(activities []ActivityFeed) {
+	for i := range activities {
+		if activities[i].Project.Slug != "" {
+			activities[i].ProjectTag = activities[i].Project.Slug
+		}
+	}
+}
+
+func synchronizeActivityProjectIDs(ctx context.Context, db *gorm.DB) error {
+	workspace, err := upsertProjectRecord(ctx, db, "workspace", "workspace")
+	if err != nil {
+		return err
+	}
+
+	if db.Migrator().HasColumn(&ActivityFeed{}, "project_tag") {
+		rows, err := db.WithContext(ctx).Raw(
+			"SELECT DISTINCT project_tag FROM activity_feed WHERE project_id IS NULL OR TRIM(project_id) = ''",
+		).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var tag sql.NullString
+			if err := rows.Scan(&tag); err != nil {
+				return err
+			}
+
+			normalized := normalizeProjectSlug(tag.String)
+			if normalized == "" {
+				normalized = "workspace"
+			}
+
+			project, err := upsertProjectRecord(ctx, db, normalized, normalized)
+			if err != nil {
+				return err
+			}
+
+			if err := db.WithContext(ctx).Exec(
+				`UPDATE activity_feed
+				 SET project_id = ?
+				 WHERE (project_id IS NULL OR TRIM(project_id) = '')
+				   AND lower(trim(coalesce(project_tag, ''))) = ?`,
+				project.ID,
+				normalized,
+			).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := db.WithContext(ctx).Exec(
+		`UPDATE activity_feed
+		 SET project_id = ?
+		 WHERE project_id IS NULL OR TRIM(project_id) = ''`,
+		workspace.ID,
+	).Error; err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func upsertProjectRecord(ctx context.Context, db *gorm.DB, slug, displayName string) (Project, error) {
+	normalizedSlug := normalizeProjectSlug(slug)
+	if normalizedSlug == "" {
+		return Project{}, errors.New("project slug cannot be empty")
+	}
+
+	project := Project{
+		Slug:        normalizedSlug,
+		DisplayName: strings.TrimSpace(displayName),
+		Status:      "active",
+	}
+	if project.DisplayName == "" {
+		project.DisplayName = normalizedSlug
+	}
+
+	if err := db.WithContext(ctx).Where("slug = ?", normalizedSlug).FirstOrCreate(&project).Error; err != nil {
+		return Project{}, err
+	}
+	return project, nil
 }

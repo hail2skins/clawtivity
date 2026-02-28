@@ -34,10 +34,10 @@ type activityIngest struct {
 
 func normalizeActivity(activity *database.ActivityFeed) {
 	if strings.TrimSpace(activity.ProjectTag) == "" {
-		activity.ProjectTag = "unknown-project"
+		activity.ProjectTag = "workspace"
 	}
 	if strings.TrimSpace(activity.ProjectReason) == "" {
-		activity.ProjectReason = "fallback:unknown"
+		activity.ProjectReason = "fallback:workspace"
 	}
 	if strings.TrimSpace(activity.Channel) == "" {
 		activity.Channel = "unknown-channel"
@@ -103,15 +103,24 @@ func applyProjectAssociation(activity *database.ActivityFeed, promptText, assist
 	activity.ProjectReason = "prompt_override"
 }
 
-func ensureProjectRegistry(ctx context.Context, db database.Service, projectTag string) {
-	if db == nil {
-		return
+func ensureProjectRegistry(ctx context.Context, db database.Service, activity *database.ActivityFeed) error {
+	if db == nil || activity == nil {
+		return nil
 	}
-	tag := strings.TrimSpace(strings.ToLower(projectTag))
-	if tag == "" || tag == "workspace" || tag == "unknown-project" {
-		return
+
+	tag := strings.TrimSpace(strings.ToLower(activity.ProjectTag))
+	if tag == "" || tag == "unknown-project" {
+		tag = "workspace"
 	}
-	_, _ = db.UpsertProject(ctx, tag, tag)
+
+	project, err := db.UpsertProject(ctx, tag, tag)
+	if err != nil {
+		return err
+	}
+
+	activity.ProjectID = project.ID
+	activity.ProjectTag = project.Slug
+	return nil
 }
 
 func extractProjectOverride(text string) string {

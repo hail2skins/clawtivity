@@ -34,8 +34,8 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 	if !svc.db.Migrator().HasIndex(&ActivityFeed{}, "idx_activity_feed_session_key") {
 		t.Fatal("expected activity_feed.session_key index to exist")
 	}
-	if !svc.db.Migrator().HasIndex(&ActivityFeed{}, "idx_activity_feed_project_tag") {
-		t.Fatal("expected activity_feed.project_tag index to exist")
+	if !svc.db.Migrator().HasIndex(&ActivityFeed{}, "idx_activity_feed_project_id") {
+		t.Fatal("expected activity_feed.project_id index to exist")
 	}
 	if !svc.db.Migrator().HasIndex(&ActivityFeed{}, "idx_activity_feed_category") {
 		t.Fatal("expected activity_feed.category index to exist")
@@ -61,7 +61,7 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 		"tokens_out",
 		"cost_estimate",
 		"duration_ms",
-		"project_tag",
+		"project_id",
 		"project_reason",
 		"external_ref",
 		"category",
@@ -116,7 +116,7 @@ func TestSQLiteAdapterGeneratesUUIDPrimaryKeys(t *testing.T) {
 		TokensOut:    50,
 		CostEstimate: 0.01,
 		DurationMS:   1200,
-		ProjectTag:   "clawtivity",
+		ProjectID:    mustProjectID(t, svc, "clawtivity"),
 		Category:     "code",
 		Thinking:     "high",
 		Reasoning:    true,
@@ -170,7 +170,7 @@ func TestActivityFeedPersistsNewFields(t *testing.T) {
 		TokensOut:      34,
 		CostEstimate:   0.002,
 		DurationMS:     500,
-		ProjectTag:     "clawtivity",
+		ProjectID:      mustProjectID(t, svc, "clawtivity"),
 		ProjectReason:  "workspace_path",
 		Category:       "research",
 		CategoryReason: "keyword_score:research=2",
@@ -192,6 +192,9 @@ func TestActivityFeedPersistsNewFields(t *testing.T) {
 
 	if fetched.Category != created.Category {
 		t.Fatalf("expected category %q, got %q", created.Category, fetched.Category)
+	}
+	if fetched.ProjectID == "" {
+		t.Fatal("expected project_id to be populated")
 	}
 	if fetched.ProjectReason != created.ProjectReason {
 		t.Fatalf("expected project_reason %q, got %q", created.ProjectReason, fetched.ProjectReason)
@@ -245,8 +248,18 @@ func TestProjectUpsertAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected list to succeed: %v", err)
 	}
-	if len(projects) != 1 {
-		t.Fatalf("expected exactly 1 project, got %d", len(projects))
+	if len(projects) < 1 {
+		t.Fatalf("expected at least 1 project, got %d", len(projects))
+	}
+	found := false
+	for _, project := range projects {
+		if project.Slug == "clawtivity" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected clawtivity project to be listed")
 	}
 }
 
@@ -280,4 +293,14 @@ func assertColumnsPresent(t *testing.T, svc *service, value any, required []stri
 			t.Fatalf("expected column %q to exist", column)
 		}
 	}
+}
+
+func mustProjectID(t *testing.T, svc *service, slug string) string {
+	t.Helper()
+
+	project, err := svc.UpsertProject(t.Context(), slug, slug)
+	if err != nil {
+		t.Fatalf("expected project upsert to succeed: %v", err)
+	}
+	return project.ID
 }

@@ -66,7 +66,7 @@ make test
 - `GET /api/activity`
   - List activity entries.
   - Supported query params:
-    - `project` (maps to `project_tag`)
+    - `project` (maps to `projects.slug`)
     - `model`
     - `date` (`YYYY-MM-DD`, filters by `created_at` day)
 - `GET /api/activity/summary`
@@ -271,7 +271,7 @@ Fields:
 - `tokens_out`
 - `cost_estimate`
 - `duration_ms`
-- `project_tag` (indexed)
+- `project_id` (indexed, relation to `projects.id`)
 - `project_reason`
 - `external_ref`
 - `category` (indexed)
@@ -284,7 +284,8 @@ Fields:
 - `created_at`
 
 Field semantics (current):
-- `project_reason`: source of `project_tag` (`prompt_override`, `workspace_path`, `plugin_config`, `fallback:unknown`).
+- `project_tag`: API response field derived from the related project slug (`projects.slug`).
+- `project_reason`: source of project assignment (`prompt_override`, `prompt_path_mention`, `plugin_config`, `fallback:workspace`).
 - `thinking`: placeholder signal for future provider-specific thinking levels; currently low-confidence.
 - `reasoning`: boolean for reasoning enabled/capable at runtime (`true`/`false`), not a proof that reasoning tokens were used.
 

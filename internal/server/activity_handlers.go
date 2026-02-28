@@ -41,7 +41,10 @@ func (s *Server) createActivityHandler(c *gin.Context) {
 		AssistantText: input.AssistantText,
 		ToolsUsed:     input.ToolsUsed,
 	})
-	ensureProjectRegistry(c.Request.Context(), s.db, input.ActivityFeed.ProjectTag)
+	if err := ensureProjectRegistry(c.Request.Context(), s.db, &input.ActivityFeed); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve project"})
+		return
+	}
 
 	if err := s.db.CreateActivity(c.Request.Context(), &input.ActivityFeed); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create activity"})

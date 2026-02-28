@@ -51,6 +51,9 @@ func TestPostActivityCreatesEntry(t *testing.T) {
 	if got.ProjectTag != "proj-alpha" {
 		t.Fatalf("expected project_tag proj-alpha, got %q", got.ProjectTag)
 	}
+	if got.ProjectID == "" {
+		t.Fatal("expected project_id to be generated from project tag")
+	}
 	if got.ProjectReason != "prompt_override" {
 		t.Fatalf("expected project_reason prompt_override, got %q", got.ProjectReason)
 	}
