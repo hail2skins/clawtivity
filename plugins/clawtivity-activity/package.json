@@ -9,5 +9,8 @@
     ]
   },
   "private": true,
+  "scripts": {
+    "test": "node --test"
+  },
   "license": "MIT"
 }
