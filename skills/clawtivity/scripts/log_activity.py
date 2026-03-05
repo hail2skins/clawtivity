@@ -20,6 +20,9 @@ from urllib.request import Request, urlopen
 API_URL = "http://localhost:18730/api/activity"
 BACKOFF_SECONDS = (1, 2, 4)
 QUEUE_ROOT = Path.home() / ".clawtivity" / "queue"
+PROJECT_OVERRIDE_PATTERN = re.compile(r"\bproject\b\s*:?\s*([a-zA-Z0-9][a-zA-Z0-9._-]*)", re.IGNORECASE)
+PROJECT_PATH_MENTION_PATTERN = re.compile(r"/projects?/([a-zA-Z0-9][a-zA-Z0-9._-]*)", re.IGNORECASE)
+PROJECT_OVERRIDE_STOPWORDS = {"as", "is", "was", "the", "a", "an", "to", "for"}
 
 
 def _http_post_json(url: str, body: bytes, timeout: int = 5):
@@ -34,7 +37,11 @@ def normalize_payload(raw: Dict) -> Dict:
     now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
     cwd = raw.get("workspace") or raw.get("cwd") or os.getcwd()
-    project_tag = raw.get("project_tag") or Path(cwd).name or "unknown"
+    project = resolve_project_context(
+        prompt_text=raw.get("prompt_text", ""),
+        workspace_dir=cwd,
+        configured_project_tag=raw.get("project_tag", ""),
+    )
 
     tools_used = raw.get("tools_used") or raw.get("tools") or []
     if isinstance(tools_used, str):
@@ -50,7 +57,8 @@ def normalize_payload(raw: Dict) -> Dict:
         "tokens_out": int(raw.get("tokens_out") or 0),
         "cost_estimate": float(raw.get("cost_estimate") or 0),
         "duration_ms": int(raw.get("duration_ms") or 0),
-        "project_tag": project_tag,
+        "project_tag": project["project_tag"],
+        "project_reason": project["project_reason"],
         "external_ref": raw.get("external_ref") or "",
         "category": raw.get("category") or "general",
         "thinking": raw.get("thinking") or "medium",
@@ -60,6 +68,117 @@ def normalize_payload(raw: Dict) -> Dict:
         "user_id": raw.get("user_id") or os.environ.get("OPENCLAW_USER_ID", "unknown-user"),
         "created_at": raw.get("created_at") or now,
         "tools_used": json.dumps(tools_used),
+    }
+
+
+def normalize_project_tag(value: str) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    raw = re.sub(r"\s+", "-", raw)
+    raw = re.sub(r"[^a-z0-9._-]", "", raw)
+    raw = re.sub(r"-+", "-", raw)
+    return raw.strip("-")
+
+
+def project_from_prompt(prompt_text: str) -> str:
+    text = str(prompt_text or "").strip()
+    if not text:
+        return ""
+    match = PROJECT_OVERRIDE_PATTERN.search(text)
+    if not match:
+        return ""
+    candidate = normalize_project_tag(match.group(1).rstrip(".,;:!?)]}\"'"))
+    if not candidate or candidate in PROJECT_OVERRIDE_STOPWORDS:
+        return ""
+    return candidate
+
+
+def project_from_path_mention(prompt_text: str) -> str:
+    text = str(prompt_text or "").strip()
+    if not text:
+        return ""
+    match = PROJECT_PATH_MENTION_PATTERN.search(text)
+    if not match:
+        return ""
+    candidate = normalize_project_tag(match.group(1).rstrip(".,;:!?)]}\"'"))
+    return candidate
+
+
+def project_from_workspace_dir(workspace_dir: str) -> str:
+    directory = str(workspace_dir or "").strip()
+    if not directory:
+        return ""
+    normalized = directory.replace("\\", "/")
+    match = re.search(r"/projects?/([^/]+)", normalized, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    return normalize_project_tag(match.group(1))
+
+
+def discover_project_roots(workspace_dir: str) -> List[Path]:
+    roots: List[Path] = []
+    seen = set()
+    candidates = [value for value in [workspace_dir, os.getcwd()] if value]
+    for candidate in candidates:
+        normalized = str(candidate).replace("\\", "/")
+        match = re.search(r"^(.*?/projects?)(?:/.*)?$", normalized, flags=re.IGNORECASE)
+        if match:
+            root = Path(match.group(1))
+            if root not in seen:
+                seen.add(root)
+                roots.append(root)
+        for suffix in ("projects", "project"):
+            root = Path(candidate) / suffix
+            if root not in seen:
+                seen.add(root)
+                roots.append(root)
+    return roots
+
+
+def project_exists_under_known_roots(project_tag: str, workspace_dir: str) -> bool:
+    roots = discover_project_roots(workspace_dir)
+    if not roots:
+        return True
+    for root in roots:
+        target = root / project_tag
+        if target.is_dir():
+            return True
+    return False
+
+
+def resolve_project_context(prompt_text: str = "", workspace_dir: str = "", configured_project_tag: str = "") -> Dict[str, str]:
+    from_prompt = project_from_prompt(prompt_text)
+    if from_prompt and project_exists_under_known_roots(from_prompt, workspace_dir):
+        return {
+            "project_tag": from_prompt,
+            "project_reason": "prompt_override",
+        }
+
+    from_path_mention = project_from_path_mention(prompt_text)
+    if from_path_mention:
+        return {
+            "project_tag": from_path_mention,
+            "project_reason": "prompt_path_mention",
+        }
+
+    from_workspace = project_from_workspace_dir(workspace_dir)
+    if from_workspace:
+        return {
+            "project_tag": from_workspace,
+            "project_reason": "workspace_path",
+        }
+
+    from_config = normalize_project_tag(configured_project_tag)
+    if from_config:
+        return {
+            "project_tag": from_config,
+            "project_reason": "plugin_config",
+        }
+
+    return {
+        "project_tag": "workspace",
+        "project_reason": "fallback:workspace",
     }
 
 

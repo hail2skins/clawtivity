@@ -1,0 +1,38 @@
+[
+  {
+    "name": "prompt override basic",
+    "prompt_text": "Work on project CLAW-XYZ and do the next steps.",
+    "expected_override": "claw-xyz",
+    "expected_path_mention": ""
+  },
+  {
+    "name": "prompt override strips punctuation",
+    "prompt_text": "Project Clawtivity. What do you think?",
+    "expected_override": "clawtivity",
+    "expected_path_mention": ""
+  },
+  {
+    "name": "connector word is ignored",
+    "prompt_text": "it listed the project as override earlier",
+    "expected_override": "",
+    "expected_path_mention": ""
+  },
+  {
+    "name": "project path mention from projects folder",
+    "prompt_text": "Codex is working in /projects/clawtivity presently. Please review it.",
+    "expected_override": "",
+    "expected_path_mention": "clawtivity"
+  },
+  {
+    "name": "project path mention from singular folder",
+    "prompt_text": "Please review /project/Foo_Bar before we continue.",
+    "expected_override": "",
+    "expected_path_mention": "foo_bar"
+  },
+  {
+    "name": "no project signal",
+    "prompt_text": "Please proceed.",
+    "expected_override": "",
+    "expected_path_mention": ""
+  }
+]

@@ -16,6 +16,33 @@ class LogActivityTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self._tmp, ignore_errors=True)
 
+    def test_shared_prompt_spec_cases_stay_aligned(self):
+        spec_path = Path(__file__).resolve().parents[3] / "spec" / "project_tag_prompt_cases.json"
+        cases = json.loads(spec_path.read_text(encoding="utf-8"))
+
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                self.assertEqual(
+                    log_activity.project_from_prompt(case["prompt_text"]),
+                    case["expected_override"],
+                )
+                self.assertEqual(
+                    log_activity.project_from_path_mention(case["prompt_text"]),
+                    case["expected_path_mention"],
+                )
+
+    def test_normalize_payload_resolves_project_from_workspace_context(self):
+        workspace_dir = Path(self._tmp) / "projects" / "clawtivity"
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+
+        payload = log_activity.normalize_payload({
+            "prompt_text": "Please proceed.",
+            "workspace": str(workspace_dir / "internal" / "server"),
+        })
+
+        self.assertEqual(payload["project_tag"], "clawtivity")
+        self.assertEqual(payload["project_reason"], "workspace_path")
+
     def test_post_with_retry_success_after_failures(self):
         payload = {"session_key": "s-1"}
         calls = []

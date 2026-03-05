@@ -13,6 +13,8 @@ const {
   extractCognition,
   resolveUserId,
   resolveProjectContext,
+  projectFromPrompt,
+  projectFromPathMention,
   extractMessageText,
   resolvePromptText,
   cacheInboundPrompt,
@@ -22,6 +24,10 @@ const {
   postWithRetry,
   sendToApi,
 } = require('../index.js');
+
+const promptSpecCases = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', '..', '..', 'spec', 'project_tag_prompt_cases.json'), 'utf8'),
+);
 
 test('shouldUseRecent enforces freshness window', () => {
   const now = Date.now();
@@ -79,7 +85,7 @@ test('buildActivityPayload produces fallback session key when recent context abs
   assert.equal(payload.session_key, 'channel:discord:conv-99');
   assert.equal(payload.status, 'failed');
   assert.equal(payload.project_tag, 'clawtivity');
-  assert.equal(payload.project_reason, 'fallback:unknown');
+  assert.equal(payload.project_reason, 'fallback:workspace');
   assert.equal(payload.created_at, '2026-02-18T00:00:00Z');
 });
 
@@ -266,7 +272,14 @@ test('resolveProjectContext ignores connector words after project', () => {
     configuredProjectTag: '',
   });
   assert.equal(got.projectTag, 'workspace');
-  assert.equal(got.projectReason, 'fallback:unknown');
+  assert.equal(got.projectReason, 'fallback:workspace');
+});
+
+test('shared prompt spec cases stay aligned with parser helpers', () => {
+  for (const specCase of promptSpecCases) {
+    assert.equal(projectFromPrompt(specCase.prompt_text), specCase.expected_override, `${specCase.name} override`);
+    assert.equal(projectFromPathMention(specCase.prompt_text), specCase.expected_path_mention, `${specCase.name} path mention`);
+  }
 });
 
 test('extractMessageText supports common event text fields', () => {
@@ -436,7 +449,7 @@ test('coalesceSnapshot keeps prior non-workspace project when current falls back
       tokensOut: 30,
       durationMs: 1200,
       projectTag: 'workspace',
-      projectReason: 'fallback:unknown',
+      projectReason: 'fallback:workspace',
       userId: 'telegram:1',
     },
   });

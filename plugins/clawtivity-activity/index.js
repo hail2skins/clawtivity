@@ -110,12 +110,16 @@ function normalizeProjectTag(value) {
     .replace(/^-+|-+$/g, '');
 }
 
+function trimTrailingProjectPunctuation(value) {
+  return asString(value, '').replace(/[.,;:!?)}\]"']+$/g, '');
+}
+
 function projectFromPrompt(promptText) {
   const text = asString(promptText, '');
   if (!text) return '';
   const match = text.match(PROJECT_OVERRIDE_PATTERN);
   if (!match || match.length < 2) return '';
-  const candidate = normalizeProjectTag(match[1].replace(/[.,;:!?)]}]+$/g, ''));
+  const candidate = normalizeProjectTag(trimTrailingProjectPunctuation(match[1]));
   if (!candidate) return '';
   if (PROJECT_OVERRIDE_STOPWORDS.has(candidate)) return '';
   return candidate;
@@ -126,7 +130,7 @@ function projectFromPathMention(promptText) {
   if (!text) return '';
   const match = text.match(PROJECT_PATH_MENTION_PATTERN);
   if (!match || match.length < 2) return '';
-  const candidate = normalizeProjectTag(match[1].replace(/[.,;:!?)]}]+$/g, ''));
+  const candidate = normalizeProjectTag(trimTrailingProjectPunctuation(match[1]));
   if (!candidate) return '';
   return candidate;
 }
@@ -213,7 +217,7 @@ function resolveProjectContext(options = {}) {
 
   return {
     projectTag: 'workspace',
-    projectReason: 'fallback:unknown',
+    projectReason: 'fallback:workspace',
   };
 }
 
@@ -390,11 +394,11 @@ function coalesceSnapshot(params) {
   const currentProjectTag = asString(safeCurrent.projectTag, '');
   const priorProjectTag = asString(safePrior.projectTag, 'workspace');
   const currentProjectReason = asString(safeCurrent.projectReason, '');
-  const priorProjectReason = asString(safePrior.projectReason, 'fallback:unknown');
+  const priorProjectReason = asString(safePrior.projectReason, 'fallback:workspace');
 
   const usePriorProject =
     currentProjectTag === 'workspace'
-    && currentProjectReason === 'fallback:unknown'
+    && currentProjectReason === 'fallback:workspace'
     && priorProjectTag !== ''
     && priorProjectTag !== 'workspace';
 
@@ -464,7 +468,7 @@ function buildActivityPayload(params) {
     cost_estimate: 0,
     duration_ms: asInt(durationMs, 0),
     project_tag: asString(projectTag, 'workspace'),
-    project_reason: asString(projectReason, 'fallback:unknown'),
+    project_reason: asString(projectReason, 'fallback:workspace'),
     external_ref: '',
     category: 'general',
     thinking: normalizeThinking(thinking) || 'low',
@@ -502,7 +506,7 @@ function mergeRecentByChannel(params) {
     tokensOut: useRecent ? recent.tokensOut : 0,
     durationMs: useRecent ? recent.durationMs : 0,
     projectTag: asString(projectTag, useRecent ? recent.projectTag : 'workspace'),
-    projectReason: useRecent ? asString(recent.projectReason, 'fallback:unknown') : 'fallback:unknown',
+    projectReason: useRecent ? asString(recent.projectReason, 'fallback:workspace') : 'fallback:workspace',
     channel: channelId,
     userId: resolveUserId(
       asString(userId, useRecent ? recent.userId : (conversationId || eventTo || '')),
@@ -890,6 +894,8 @@ module.exports = {
   extractUsage,
   resolveUserId,
   resolveProjectContext,
+  projectFromPrompt,
+  projectFromPathMention,
   extractCognition,
   coalesceSnapshot,
   settleSnapshot,
