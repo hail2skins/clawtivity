@@ -2,6 +2,7 @@ package server
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -32,4 +33,16 @@ func TestResolvePortFallsBackOnInvalidValue(t *testing.T) {
 func TestResolvePortFromRealEnvDoesNotPanic(t *testing.T) {
 	_ = os.Getenv("PORT")
 	_ = resolvePort()
+}
+
+func TestNewServerReturnsErrorWhenDBInitFails(t *testing.T) {
+	t.Setenv("BLUEPRINT_DB_URL", filepath.Join(t.TempDir(), "missing", "db.sqlite"))
+
+	srv, err := NewServer()
+	if err == nil {
+		t.Fatal("expected NewServer to return DB init error")
+	}
+	if srv != nil {
+		t.Fatal("expected nil server when DB init fails")
+	}
 }

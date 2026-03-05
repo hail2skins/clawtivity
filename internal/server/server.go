@@ -18,12 +18,15 @@ type Server struct {
 	db database.Service
 }
 
-func NewServer() *http.Server {
+func NewServer() (*http.Server, error) {
 	port := resolvePort()
+	db, err := database.New()
+	if err != nil {
+		return nil, err
+	}
 	NewServer := &Server{
 		port: port,
-
-		db: database.New(),
+		db:   db,
 	}
 
 	flushQueueOnStartup(NewServer.db)
@@ -37,7 +40,7 @@ func NewServer() *http.Server {
 		WriteTimeout: 30 * time.Second,
 	}
 
-	return server
+	return server, nil
 }
 
 func resolvePort() int {

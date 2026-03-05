@@ -10,7 +10,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	_ "github.com/joho/godotenv/autoload"
@@ -148,29 +147,11 @@ type ProjectSummary struct {
 type service struct {
 	db    *gorm.DB
 	sqlDB *sql.DB
+	dsn   string
 }
 
-var (
-	dburl      = os.Getenv("BLUEPRINT_DB_URL")
-	dbInstance *service
-	dbMu       sync.Mutex
-)
-
-func New() Service {
-	dbMu.Lock()
-	defer dbMu.Unlock()
-
-	if dbInstance != nil {
-		return dbInstance
-	}
-
-	svc, err := newSQLiteService(dburl)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	dbInstance = svc
-	return dbInstance
+func New() (Service, error) {
+	return newSQLiteService(os.Getenv("BLUEPRINT_DB_URL"))
 }
 
 func NewSQLiteAdapter(dsn string) (Service, error) {
@@ -205,7 +186,7 @@ func newSQLiteService(dsn string) (*service, error) {
 		return nil, err
 	}
 
-	return &service{db: gormDB, sqlDB: sqlDB}, nil
+	return &service{db: gormDB, sqlDB: sqlDB, dsn: dsn}, nil
 }
 
 // Health checks the health of the database connection by pinging the database.
@@ -397,7 +378,7 @@ func (s *service) ListProjectsWithStats(ctx context.Context, status string) ([]P
 
 // Close closes the database connection.
 func (s *service) Close() error {
-	log.Printf("Disconnected from database: %s", dburl)
+	log.Printf("Disconnected from database: %s", s.dsn)
 	return s.sqlDB.Close()
 }
 
