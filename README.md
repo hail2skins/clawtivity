@@ -87,6 +87,13 @@ make test
 - `GET /health`
   - Service/database health information.
 
+### Pricing Catalog
+
+- `model_pricing`
+  - Local reference pricing catalog seeded at API startup/migration time.
+  - Stores provider/model pricing metadata (`effective_from`, input/output per-1M rates, optional reasoning rate, source, and verification fields).
+  - Intended as the runtime source of truth for later cost estimation work; it does not depend on live provider pricing fetches.
+
 ### Swagger UI
 
 - `GET /swagger/index.html`

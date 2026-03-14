@@ -1,0 +1,54 @@
+[
+  {
+    "provider": "openai",
+    "model": "gpt-5",
+    "effective_from": "2026-03-14T00:00:00Z",
+    "input_cost_per_1m": 2.5,
+    "output_cost_per_1m": 15.0,
+    "reasoning_cost_per_1m": null,
+    "currency": "USD",
+    "source": "https://platform.openai.com/docs/pricing",
+    "is_estimated": false,
+    "last_verified_at": "2026-03-14T00:00:00Z",
+    "verification_notes": "Seeded from OpenAI official pricing page."
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5-mini",
+    "effective_from": "2026-03-14T00:00:00Z",
+    "input_cost_per_1m": 0.25,
+    "output_cost_per_1m": 2.0,
+    "reasoning_cost_per_1m": null,
+    "currency": "USD",
+    "source": "https://platform.openai.com/docs/pricing",
+    "is_estimated": false,
+    "last_verified_at": "2026-03-14T00:00:00Z",
+    "verification_notes": "Seeded from OpenAI official pricing page."
+  },
+  {
+    "provider": "openrouter",
+    "model": "moonshotai/kimi-k2.5",
+    "effective_from": "2026-03-14T00:00:00Z",
+    "input_cost_per_1m": 0.45,
+    "output_cost_per_1m": 2.2,
+    "reasoning_cost_per_1m": null,
+    "currency": "USD",
+    "source": "https://openrouter.ai/moonshotai/kimi-k2.5",
+    "is_estimated": false,
+    "last_verified_at": "2026-03-14T00:00:00Z",
+    "verification_notes": "Seeded from OpenRouter model pricing page."
+  },
+  {
+    "provider": "openrouter",
+    "model": "moonshotai/kimi-k2-thinking",
+    "effective_from": "2026-03-14T00:00:00Z",
+    "input_cost_per_1m": 0.47,
+    "output_cost_per_1m": 2.0,
+    "reasoning_cost_per_1m": 3.0,
+    "currency": "USD",
+    "source": "https://openrouter.ai/moonshotai/kimi-k2-thinking",
+    "is_estimated": false,
+    "last_verified_at": "2026-03-14T00:00:00Z",
+    "verification_notes": "Seeded from OpenRouter model pricing page."
+  }
+]

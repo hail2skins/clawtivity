@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -100,6 +102,35 @@ func (p *Project) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
+// ModelPricing stores local reference pricing for provider/model pairs.
+type ModelPricing struct {
+	ID                  string     `gorm:"type:char(36);primaryKey" json:"id"`
+	Provider            string     `gorm:"uniqueIndex:idx_model_pricing_lookup,priority:1;index:idx_model_pricing_source" json:"provider"`
+	Model               string     `gorm:"uniqueIndex:idx_model_pricing_lookup,priority:2" json:"model"`
+	EffectiveFrom       time.Time  `gorm:"uniqueIndex:idx_model_pricing_lookup,priority:3" json:"effective_from"`
+	InputCostPer1M      float64    `gorm:"column:input_cost_per_1m" json:"input_cost_per_1m"`
+	OutputCostPer1M     float64    `gorm:"column:output_cost_per_1m" json:"output_cost_per_1m"`
+	ReasoningCostPer1M  *float64   `gorm:"column:reasoning_cost_per_1m" json:"reasoning_cost_per_1m,omitempty"`
+	Currency            string     `json:"currency"`
+	Source              string     `gorm:"index:idx_model_pricing_source" json:"source"`
+	IsEstimated         bool       `json:"is_estimated"`
+	LastVerifiedAt      *time.Time `gorm:"column:last_verified_at" json:"last_verified_at,omitempty"`
+	VerificationNotes   string     `gorm:"column:verification_notes" json:"verification_notes"`
+	CreatedAt           time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt           time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+func (ModelPricing) TableName() string {
+	return "model_pricing"
+}
+
+func (m *ModelPricing) BeforeCreate(_ *gorm.DB) error {
+	if m.ID == "" {
+		m.ID = generateUUIDv4()
+	}
+	return nil
+}
+
 // Service represents a service that interacts with a database.
 type Service interface {
 	// Health returns a map of health status information.
@@ -111,6 +142,7 @@ type Service interface {
 	UpsertProject(ctx context.Context, slug, displayName string) (Project, error)
 	ListProjects(ctx context.Context, status string) ([]Project, error)
 	ListProjectsWithStats(ctx context.Context, status string) ([]ProjectSummary, error)
+	ListModelPricing(ctx context.Context, provider string) ([]ModelPricing, error)
 
 	// Close terminates the database connection.
 	Close() error
@@ -150,6 +182,23 @@ type service struct {
 	dsn   string
 }
 
+type seededModelPricing struct {
+	Provider           string   `json:"provider"`
+	Model              string   `json:"model"`
+	EffectiveFrom      string   `json:"effective_from"`
+	InputCostPer1M     float64  `json:"input_cost_per_1m"`
+	OutputCostPer1M    float64  `json:"output_cost_per_1m"`
+	ReasoningCostPer1M *float64 `json:"reasoning_cost_per_1m"`
+	Currency           string   `json:"currency"`
+	Source             string   `json:"source"`
+	IsEstimated        bool     `json:"is_estimated"`
+	LastVerifiedAt     string   `json:"last_verified_at"`
+	VerificationNotes  string   `json:"verification_notes"`
+}
+
+//go:embed model_pricing_seed.json
+var modelPricingSeedJSON []byte
+
 func New() (Service, error) {
 	return newSQLiteService(os.Getenv("BLUEPRINT_DB_URL"))
 }
@@ -173,7 +222,11 @@ func newSQLiteService(dsn string) (*service, error) {
 		return nil, err
 	}
 
-	if err := gormDB.AutoMigrate(&Project{}, &ActivityFeed{}, &TurnMemory{}); err != nil {
+	if err := gormDB.AutoMigrate(&Project{}, &ActivityFeed{}, &TurnMemory{}, &ModelPricing{}); err != nil {
+		return nil, err
+	}
+
+	if err := seedModelPricingCatalog(context.Background(), gormDB); err != nil {
 		return nil, err
 	}
 
@@ -371,6 +424,19 @@ func (s *service) ListProjectsWithStats(ctx context.Context, status string) ([]P
 
 	var rows []ProjectSummary
 	if err := tx.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (s *service) ListModelPricing(ctx context.Context, provider string) ([]ModelPricing, error) {
+	tx := s.db.WithContext(ctx).Model(&ModelPricing{})
+	if trimmed := strings.TrimSpace(provider); trimmed != "" {
+		tx = tx.Where("provider = ?", strings.ToLower(trimmed))
+	}
+
+	var rows []ModelPricing
+	if err := tx.Order("provider asc, model asc, effective_from desc").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil
@@ -587,4 +653,76 @@ func loadLegacyProjectTags(ctx context.Context, db *gorm.DB) (map[string]string,
 	}
 
 	return result, nil
+}
+
+func seedModelPricingCatalog(ctx context.Context, db *gorm.DB) error {
+	rows, err := loadSeededModelPricing()
+	if err != nil {
+		return err
+	}
+
+	for _, row := range rows {
+		lookup := ModelPricing{
+			Provider:      row.Provider,
+			Model:         row.Model,
+			EffectiveFrom: row.EffectiveFrom,
+		}
+
+		var existing ModelPricing
+		err := db.WithContext(ctx).
+			Where("provider = ? AND model = ? AND effective_from = ?", lookup.Provider, lookup.Model, lookup.EffectiveFrom).
+			First(&existing).Error
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		if err := db.WithContext(ctx).Create(&row).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func loadSeededModelPricing() ([]ModelPricing, error) {
+	var seeds []seededModelPricing
+	if err := json.Unmarshal(modelPricingSeedJSON, &seeds); err != nil {
+		return nil, err
+	}
+
+	rows := make([]ModelPricing, 0, len(seeds))
+	for _, seed := range seeds {
+		effectiveFrom, err := time.Parse(time.RFC3339, strings.TrimSpace(seed.EffectiveFrom))
+		if err != nil {
+			return nil, fmt.Errorf("parse model pricing effective_from for %s/%s: %w", seed.Provider, seed.Model, err)
+		}
+
+		var lastVerifiedAt *time.Time
+		if trimmed := strings.TrimSpace(seed.LastVerifiedAt); trimmed != "" {
+			parsed, err := time.Parse(time.RFC3339, trimmed)
+			if err != nil {
+				return nil, fmt.Errorf("parse model pricing last_verified_at for %s/%s: %w", seed.Provider, seed.Model, err)
+			}
+			lastVerifiedAt = &parsed
+		}
+
+		rows = append(rows, ModelPricing{
+			Provider:           strings.ToLower(strings.TrimSpace(seed.Provider)),
+			Model:              strings.TrimSpace(seed.Model),
+			EffectiveFrom:      effectiveFrom,
+			InputCostPer1M:     seed.InputCostPer1M,
+			OutputCostPer1M:    seed.OutputCostPer1M,
+			ReasoningCostPer1M: seed.ReasoningCostPer1M,
+			Currency:           strings.ToUpper(strings.TrimSpace(seed.Currency)),
+			Source:             strings.TrimSpace(seed.Source),
+			IsEstimated:        seed.IsEstimated,
+			LastVerifiedAt:     lastVerifiedAt,
+			VerificationNotes:  strings.TrimSpace(seed.VerificationNotes),
+		})
+	}
+
+	return rows, nil
 }

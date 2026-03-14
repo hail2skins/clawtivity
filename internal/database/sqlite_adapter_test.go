@@ -33,6 +33,9 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 	if !svc.db.Migrator().HasTable(&Project{}) {
 		t.Fatal("expected projects table to exist")
 	}
+	if !svc.db.Migrator().HasTable(&ModelPricing{}) {
+		t.Fatal("expected model_pricing table to exist")
+	}
 
 	if !svc.db.Migrator().HasIndex(&ActivityFeed{}, "idx_activity_feed_session_key") {
 		t.Fatal("expected activity_feed.session_key index to exist")
@@ -54,6 +57,12 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 	}
 	if !svc.db.Migrator().HasIndex(&Project{}, "idx_projects_slug") {
 		t.Fatal("expected projects.slug index to exist")
+	}
+	if !svc.db.Migrator().HasIndex(&ModelPricing{}, "idx_model_pricing_lookup") {
+		t.Fatal("expected model_pricing lookup index to exist")
+	}
+	if !svc.db.Migrator().HasIndex(&ModelPricing{}, "idx_model_pricing_source") {
+		t.Fatal("expected model_pricing source index to exist")
 	}
 
 	assertColumnsPresent(t, svc, &ActivityFeed{}, []string{
@@ -94,6 +103,23 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 		"slug",
 		"display_name",
 		"status",
+		"created_at",
+		"updated_at",
+	})
+
+	assertColumnsPresent(t, svc, &ModelPricing{}, []string{
+		"id",
+		"provider",
+		"model",
+		"effective_from",
+		"input_cost_per_1m",
+		"output_cost_per_1m",
+		"reasoning_cost_per_1m",
+		"currency",
+		"source",
+		"is_estimated",
+		"last_verified_at",
+		"verification_notes",
 		"created_at",
 		"updated_at",
 	})
@@ -266,6 +292,68 @@ func TestProjectUpsertAndList(t *testing.T) {
 	}
 }
 
+func TestNewSQLiteAdapterSeedsReferenceModelPricingCatalog(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
+
+	adapter, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected adapter to initialize: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = adapter.Close()
+	})
+
+	svc := adapter.(*service)
+
+	var prices []ModelPricing
+	if err := svc.db.Order("provider asc, model asc").Find(&prices).Error; err != nil {
+		t.Fatalf("expected seeded pricing rows to be queryable: %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected seeded model pricing rows")
+	}
+
+	assertSeededModelPricing(t, prices, "openai", "gpt-5", 2.50, 15.0, false)
+	assertSeededModelPricing(t, prices, "openrouter", "moonshotai/kimi-k2.5", 0.45, 2.20, false)
+	assertSeededModelPricing(t, prices, "openrouter", "moonshotai/kimi-k2-thinking", 0.47, 2.0, false)
+}
+
+func TestNewSQLiteAdapterSeedsModelPricingIdempotently(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
+
+	first, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected first adapter init to succeed: %v", err)
+	}
+
+	svc1 := first.(*service)
+	var firstCount int64
+	if err := svc1.db.Model(&ModelPricing{}).Count(&firstCount).Error; err != nil {
+		t.Fatalf("expected first count query to succeed: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("expected first adapter close to succeed: %v", err)
+	}
+
+	second, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected second adapter init to succeed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = second.Close()
+	})
+
+	svc2 := second.(*service)
+	var secondCount int64
+	if err := svc2.db.Model(&ModelPricing{}).Count(&secondCount).Error; err != nil {
+		t.Fatalf("expected second count query to succeed: %v", err)
+	}
+
+	if firstCount != secondCount {
+		t.Fatalf("expected seeded model pricing count to remain stable, got %d then %d", firstCount, secondCount)
+	}
+}
+
 func TestNewSQLiteAdapterBackfillsLegacyProjectTagWithoutLock(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "legacy-clawtivity.db")
 
@@ -380,4 +468,35 @@ func mustProjectID(t *testing.T, svc *service, slug string) string {
 		t.Fatalf("expected project upsert to succeed: %v", err)
 	}
 	return project.ID
+}
+
+func assertSeededModelPricing(t *testing.T, prices []ModelPricing, provider, model string, wantInput, wantOutput float64, wantEstimated bool) {
+	t.Helper()
+
+	for _, price := range prices {
+		if price.Provider != provider || price.Model != model {
+			continue
+		}
+		if price.InputCostPer1M != wantInput {
+			t.Fatalf("expected %s/%s input cost %.2f, got %.2f", provider, model, wantInput, price.InputCostPer1M)
+		}
+		if price.OutputCostPer1M != wantOutput {
+			t.Fatalf("expected %s/%s output cost %.2f, got %.2f", provider, model, wantOutput, price.OutputCostPer1M)
+		}
+		if price.IsEstimated != wantEstimated {
+			t.Fatalf("expected %s/%s is_estimated %t, got %t", provider, model, wantEstimated, price.IsEstimated)
+		}
+		if price.Currency != "USD" {
+			t.Fatalf("expected %s/%s currency USD, got %q", provider, model, price.Currency)
+		}
+		if price.Source == "" {
+			t.Fatalf("expected %s/%s source to be populated", provider, model)
+		}
+		if price.LastVerifiedAt == nil || price.LastVerifiedAt.IsZero() {
+			t.Fatalf("expected %s/%s last_verified_at to be populated", provider, model)
+		}
+		return
+	}
+
+	t.Fatalf("expected seeded model pricing row for %s/%s", provider, model)
 }
