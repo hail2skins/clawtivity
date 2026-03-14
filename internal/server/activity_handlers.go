@@ -51,6 +51,17 @@ func (s *Server) createActivityHandler(c *gin.Context) {
 		return
 	}
 
+	incActivitiesCreated()
+	queueDepth := currentQueueDepth()
+	logEvent("info", "api_ingest", map[string]any{
+		"session_key":    input.ActivityFeed.SessionKey,
+		"model":          input.ActivityFeed.Model,
+		"project_tag":    input.ActivityFeed.ProjectTag,
+		"project_reason": input.ActivityFeed.ProjectReason,
+		"category":       input.ActivityFeed.Category,
+		"queue_root":     resolveQueueDir(),
+	}, queueDepth)
+
 	c.JSON(http.StatusCreated, input.ActivityFeed)
 }
 

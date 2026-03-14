@@ -12,6 +12,36 @@ const PROJECT_PATH_MENTION_PATTERN = /\/projects?\/([a-zA-Z0-9][a-zA-Z0-9._-]*)/
 const PROJECT_OVERRIDE_STOPWORDS = new Set(['as', 'is', 'was', 'the', 'a', 'an', 'to', 'for']);
 const QUEUE_ROOT_ENV = 'CLAWTIVITY_QUEUE_ROOT';
 const BACKOFF_SECONDS_ENV = 'CLAWTIVITY_BACKOFF_SECONDS';
+const LOG_LEVEL_ENV = 'CLAWTIVITY_LOG_LEVEL';
+const DEFAULT_LOG_LEVEL = 'info';
+const LOG_LEVEL_PRIORITY = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+};
+
+const metricsCounters = {
+  activities_created: 0,
+  queue_flush_attempted: 0,
+  queue_flush_succeeded: 0,
+  queue_flush_failed: 0,
+  plugin_post_failed: 0,
+  queue_fallback_enqueued: 0,
+  replay_succeeded: 0,
+  replay_failed: 0,
+};
+
+function resetMetricsCounters() {
+  metricsCounters.activities_created = 0;
+  metricsCounters.queue_flush_attempted = 0;
+  metricsCounters.queue_flush_succeeded = 0;
+  metricsCounters.queue_flush_failed = 0;
+  metricsCounters.plugin_post_failed = 0;
+  metricsCounters.queue_fallback_enqueued = 0;
+  metricsCounters.replay_succeeded = 0;
+  metricsCounters.replay_failed = 0;
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -31,6 +61,70 @@ function asString(value, fallback = '') {
     return String(value);
   }
   return fallback;
+}
+
+function resolveLogLevel() {
+  const value = asString(process.env[LOG_LEVEL_ENV], DEFAULT_LOG_LEVEL).toLowerCase();
+  return Object.hasOwn(LOG_LEVEL_PRIORITY, value) ? value : DEFAULT_LOG_LEVEL;
+}
+
+function shouldLog(level) {
+  const normalized = asString(level, DEFAULT_LOG_LEVEL).toLowerCase();
+  const eventPriority = Object.hasOwn(LOG_LEVEL_PRIORITY, normalized)
+    ? LOG_LEVEL_PRIORITY[normalized]
+    : LOG_LEVEL_PRIORITY[DEFAULT_LOG_LEVEL];
+  return eventPriority >= LOG_LEVEL_PRIORITY[resolveLogLevel()];
+}
+
+function emitStructuredLog(logger, level, event, details = {}, overrides = {}) {
+  if (!logger || typeof logger[level] !== 'function' || !shouldLog(level)) {
+    return;
+  }
+
+  const extraMetrics = { ...overrides };
+  const queueDepth = asInt(extraMetrics.queue_depth ?? 0, 0);
+  extraMetrics.queue_depth = queueDepth;
+  const baseMetrics = {
+    activities_created: metricsCounters.activities_created,
+    queue_flush_attempted: metricsCounters.queue_flush_attempted,
+    queue_flush_succeeded: metricsCounters.queue_flush_succeeded,
+    queue_flush_failed: metricsCounters.queue_flush_failed,
+    plugin_post_failed: metricsCounters.plugin_post_failed,
+    queue_fallback_enqueued: metricsCounters.queue_fallback_enqueued,
+    replay_succeeded: metricsCounters.replay_succeeded,
+    replay_failed: metricsCounters.replay_failed,
+    queue_depth: queueDepth,
+  };
+
+  logger[level](JSON.stringify({
+    timestamp: nowIso(),
+    level,
+    event,
+    metrics: {
+      ...baseMetrics,
+      ...extraMetrics,
+    },
+    details: {
+      ...details,
+      queue_depth: queueDepth,
+    },
+  }));
+}
+
+function countQueuedEntries(queueRoot) {
+  const root = asString(queueRoot, '');
+  if (!root || !fs.existsSync(root)) {
+    return 0;
+  }
+
+  let total = 0;
+  for (const name of fs.readdirSync(root)) {
+    if (!name.endsWith('.md')) continue;
+    const body = fs.readFileSync(path.join(root, name), 'utf8');
+    const matches = body.match(/```json\n([\s\S]*?)\n```/g);
+    total += matches ? matches.length : 0;
+  }
+  return total;
 }
 
 function asBool(value, fallback = undefined) {
@@ -658,12 +752,17 @@ async function postWithRetry(options = {}) {
     backoffsMs = DEFAULT_BACKOFF_MS,
     sleep: sleepImpl = sleep,
     logger,
+    queueRoot = DEFAULT_QUEUE_ROOT,
   } = options;
+
+  metricsCounters.queue_flush_attempted += 1;
 
   let lastError;
   for (let i = 0; i < backoffsMs.length; i += 1) {
     try {
       await postJsonImpl(apiUrl, payload);
+      metricsCounters.queue_flush_succeeded += 1;
+      metricsCounters.activities_created += 1;
       return true;
     } catch (err) {
       lastError = err;
@@ -673,9 +772,15 @@ async function postWithRetry(options = {}) {
     }
   }
 
-  if (logger && typeof logger.warn === 'function') {
-    logger.warn(`[clawtivity-activity] failed after retries: ${String(lastError)}`);
-  }
+  metricsCounters.queue_flush_failed += 1;
+  metricsCounters.plugin_post_failed += 1;
+  emitStructuredLog(logger, 'warn', 'plugin_post_failed', {
+    api_url: apiUrl,
+    error: String(lastError),
+    session_key: payload && payload.session_key,
+  }, {
+    queue_depth: countQueuedEntries(queueRoot),
+  });
   return false;
 }
 
@@ -754,6 +859,7 @@ function enqueuePayload(queueRoot, payload) {
   ].join('\n');
 
   fs.appendFileSync(filePath, block, 'utf8');
+  return { filePath, queueDepth: countQueuedEntries(queueRoot) };
 }
 
 async function sendToApi(payload, options = {}) {
@@ -766,10 +872,17 @@ async function sendToApi(payload, options = {}) {
     backoffsMs,
   } = options;
 
-  const ok = await postWithRetry({ payload, apiUrl, logger, postJson, sleep, backoffsMs });
-  if (!ok && logger && typeof logger.warn === 'function') {
-    enqueuePayload(queueRoot, payload);
-    logger.warn('[clawtivity-activity] payload queued after retries');
+  const ok = await postWithRetry({ payload, apiUrl, queueRoot, logger, postJson, sleep, backoffsMs });
+  if (!ok) {
+    const queued = enqueuePayload(queueRoot, payload);
+    metricsCounters.queue_fallback_enqueued += 1;
+    emitStructuredLog(logger, 'info', 'queue_fallback_enqueued', {
+      file: queued.filePath,
+      queue_root: queueRoot,
+      session_key: payload && payload.session_key,
+    }, {
+      queue_depth: queued.queueDepth,
+    });
   }
 }
 
@@ -949,4 +1062,6 @@ module.exports = {
   resolveBackoffMs,
   postWithRetry,
   sendToApi,
+  countQueuedEntries,
+  _resetMetricsCounters: resetMetricsCounters,
 };

@@ -8,6 +8,7 @@ Clawtivity API with retry/backoff, and falls back to markdown queue files.
 import argparse
 import datetime as dt
 import json
+import logging
 import math
 import os
 import re
@@ -24,6 +25,89 @@ DEFAULT_QUEUE_ROOT = Path.home() / ".clawtivity" / "queue"
 PROJECT_OVERRIDE_PATTERN = re.compile(r"\bproject\b\s*:?\s*([a-zA-Z0-9][a-zA-Z0-9._-]*)", re.IGNORECASE)
 PROJECT_PATH_MENTION_PATTERN = re.compile(r"/projects?/([a-zA-Z0-9][a-zA-Z0-9._-]*)", re.IGNORECASE)
 PROJECT_OVERRIDE_STOPWORDS = {"as", "is", "was", "the", "a", "an", "to", "for"}
+LOG_LEVEL_ENV = "CLAWTIVITY_LOG_LEVEL"
+DEFAULT_LOG_LEVEL = "info"
+LOG_LEVEL_PRIORITY = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warn": logging.WARNING,
+    "error": logging.ERROR,
+}
+LOGGER = logging.getLogger("clawtivity.fallback")
+if not LOGGER.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    LOGGER.addHandler(_handler)
+LOGGER.setLevel(logging.DEBUG)
+LOGGER.propagate = False
+
+METRICS_COUNTERS = {
+    'activities_created': 0,
+    'queue_flush_attempted': 0,
+    'queue_flush_succeeded': 0,
+    'queue_flush_failed': 0,
+    'plugin_post_failed': 0,
+    'queue_fallback_enqueued': 0,
+    'replay_succeeded': 0,
+    'replay_failed': 0,
+}
+
+
+def reset_metrics_counters() -> None:
+    for key in METRICS_COUNTERS:
+        METRICS_COUNTERS[key] = 0
+
+
+def _inc_metric(name: str) -> None:
+    if name in METRICS_COUNTERS:
+        METRICS_COUNTERS[name] += 1
+
+
+def _metrics_payload(queue_depth: int) -> Dict[str, int]:
+    metrics = {key: METRICS_COUNTERS[key] for key in METRICS_COUNTERS}
+    metrics['queue_depth'] = int(queue_depth)
+    return metrics
+
+
+
+def resolve_log_level() -> str:
+    value = str(os.environ.get(LOG_LEVEL_ENV, DEFAULT_LOG_LEVEL) or DEFAULT_LOG_LEVEL).strip().lower()
+    return value if value in LOG_LEVEL_PRIORITY else DEFAULT_LOG_LEVEL
+
+
+def should_log(level: str) -> bool:
+    target = LOG_LEVEL_PRIORITY.get(str(level).strip().lower(), logging.INFO)
+    current = LOG_LEVEL_PRIORITY.get(resolve_log_level(), logging.INFO)
+    return target >= current
+
+
+def log_event(level: str, event: str, details: Optional[Dict] = None, queue_depth: int = 0):
+    normalized = str(level or DEFAULT_LOG_LEVEL).strip().lower()
+    if not should_log(normalized):
+        return
+
+    payload = {
+        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "level": normalized,
+        "event": event,
+        "metrics": _metrics_payload(queue_depth),
+        "details": {
+            **(details or {}),
+            "queue_depth": int(queue_depth),
+        },
+    }
+    LOGGER.log(LOG_LEVEL_PRIORITY.get(normalized, logging.INFO), json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
+
+
+def count_queued_entries(queue_root: Path) -> int:
+    root = Path(queue_root)
+    if not root.exists():
+        return 0
+
+    count = 0
+    for path in sorted(root.glob("*.md")):
+        count += len(_extract_payloads(path.read_text(encoding="utf-8")))
+    return count
 
 
 def _parse_seconds(value: str) -> Tuple[int, ...]:
@@ -224,7 +308,7 @@ def _queue_file(queue_root: Path, when: dt.datetime = None) -> Path:
     return queue_root / f"{when.strftime('%Y-%m-%d')}.md"
 
 
-def enqueue_payload(queue_root: Path, payload: Dict):
+def enqueue_payload(queue_root: Path, payload: Dict, *, emit_log: bool = True):
     path = _queue_file(queue_root)
     timestamp = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
     if not path.exists():
@@ -238,6 +322,16 @@ def enqueue_payload(queue_root: Path, payload: Dict):
     )
     with path.open("a", encoding="utf-8") as f:
         f.write(block)
+
+    queue_depth = count_queued_entries(queue_root)
+    if emit_log:
+        _inc_metric("queue_fallback_enqueued")
+        log_event("info", "queue_fallback_enqueued", {
+            "file": str(path),
+            "queue_root": str(queue_root),
+            "session_key": payload.get("session_key", ""),
+        }, queue_depth=queue_depth)
+    return queue_depth
 
 
 def _extract_payloads(markdown: str) -> List[Dict]:
@@ -272,15 +366,41 @@ def flush_queue(url: str, queue_root: Optional[Path] = None):
     if not queue_root.exists():
         return
 
+    _inc_metric("queue_flush_attempted")
+    log_event("info", "queue_flush_attempted", {
+        "queue_root": str(queue_root),
+    }, queue_depth=count_queued_entries(queue_root))
+
     for path in sorted(queue_root.glob("*.md")):
         body = path.read_text(encoding="utf-8")
         payloads = _extract_payloads(body)
         remaining = []
 
         for payload in payloads:
-            ok = post_with_retry(payload, url, queue_root=queue_root, flush_on_success=False)
-            if not ok:
+            ok = post_with_retry(
+                payload,
+                url,
+                queue_root=queue_root,
+                flush_on_success=False,
+                enqueue_on_failure=False,
+            )
+            if ok:
+                _inc_metric("queue_flush_succeeded")
+                _inc_metric("replay_succeeded")
+                log_event("info", "replay_succeeded", {
+                    "file": str(path),
+                    "queue_root": str(queue_root),
+                    "session_key": payload.get("session_key", ""),
+                }, queue_depth=max(count_queued_entries(queue_root) - 1, 0))
+            else:
                 remaining.append(payload)
+                _inc_metric("queue_flush_failed")
+                _inc_metric("replay_failed")
+                log_event("warn", "replay_failed", {
+                    "file": str(path),
+                    "queue_root": str(queue_root),
+                    "session_key": payload.get("session_key", ""),
+                }, queue_depth=count_queued_entries(queue_root))
 
         _write_payloads(path, remaining)
 
@@ -291,23 +411,34 @@ def post_with_retry(
     queue_root: Optional[Path] = None,
     backoff_seconds: Optional[Tuple[int, ...]] = None,
     flush_on_success: bool = True,
+    enqueue_on_failure: bool = True,
 ) -> bool:
     queue_root = queue_root or resolve_queue_root()
     backoff_seconds = backoff_seconds or resolve_backoff_seconds()
     body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
 
     attempts = len(backoff_seconds)
+    last_error = None
     for idx in range(attempts):
         try:
             _http_post_json(url, body)
+            _inc_metric("activities_created")
             if flush_on_success:
                 flush_queue(url, queue_root=queue_root)
             return True
-        except (HTTPError, URLError, RuntimeError, ValueError):
+        except (HTTPError, URLError, RuntimeError, ValueError) as err:
+            last_error = err
             if idx < attempts - 1:
                 time.sleep(backoff_seconds[idx])
 
-    enqueue_payload(queue_root, payload)
+    _inc_metric("plugin_post_failed")
+    log_event("warn", "plugin_post_failed", {
+        "api_url": url,
+        "error": str(last_error) if last_error else "unknown error",
+        "session_key": payload.get("session_key", ""),
+    }, queue_depth=count_queued_entries(queue_root))
+    if enqueue_on_failure:
+        enqueue_payload(queue_root, payload)
     return False
 
 

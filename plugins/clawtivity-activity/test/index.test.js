@@ -25,6 +25,8 @@ const {
   resolveBackoffMs,
   postWithRetry,
   sendToApi,
+  countQueuedEntries,
+  _resetMetricsCounters,
 } = require('../index.js');
 
 const promptSpecCases = JSON.parse(
@@ -187,10 +189,25 @@ test('plugin source does not use child_process', () => {
   assert.equal(source.includes('child_process'), false);
 });
 
-test('plugin source does not read queue files', () => {
-  const pluginPath = path.join(__dirname, '..', 'index.js');
-  const source = fs.readFileSync(pluginPath, 'utf8');
-  assert.equal(source.includes('readFileSync'), false);
+test('countQueuedEntries reflects queued markdown payload count', () => {
+  const queueRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clawtivity-plugin-count-'));
+  const filePath = path.join(queueRoot, '2026-03-14.md');
+  fs.writeFileSync(filePath, [
+    '# Clawtivity Fallback Queue (2026-03-14)',
+    '',
+    '## queued_at: 2026-03-14T00:00:00Z',
+    '```json',
+    JSON.stringify({ session_key: 's-1' }),
+    '```',
+    '',
+    '## queued_at: 2026-03-14T00:01:00Z',
+    '```json',
+    JSON.stringify({ session_key: 's-2' }),
+    '```',
+    '',
+  ].join('\n'));
+
+  assert.equal(countQueuedEntries(queueRoot), 2);
 });
 
 test('channelKeyFromContext prefers channelId then messageProvider', () => {
@@ -590,9 +607,10 @@ test('settleSnapshot adopts late llm_output snapshot for same session', async ()
   assert.equal(settled.tokensOut, 44);
 });
 
-test('postWithRetry retries with backoff and fails cleanly after final failure', async () => {
+test('postWithRetry retries with backoff and logs structured failure after final failure', async () => {
   const payload = { session_key: 's1' };
   const sleeps = [];
+  const warnings = [];
   let calls = 0;
 
   const ok = await postWithRetry({
@@ -600,6 +618,7 @@ test('postWithRetry retries with backoff and fails cleanly after final failure',
     apiUrl: 'http://localhost:18730/api/activity',
     backoffsMs: [1, 2, 4],
     sleep: async (ms) => sleeps.push(ms),
+    logger: { warn: (message) => warnings.push(JSON.parse(message)) },
     postJson: async () => {
       calls += 1;
       throw new Error('boom');
@@ -609,16 +628,53 @@ test('postWithRetry retries with backoff and fails cleanly after final failure',
   assert.equal(ok, false);
   assert.equal(calls, 3);
   assert.deepEqual(sleeps, [1, 2]);
+  assert.equal(warnings[0].event, 'plugin_post_failed');
+  assert.equal(warnings[0].details.error, 'Error: boom');
 });
 
-test('sendToApi queues payload to markdown file after retry exhaustion', async () => {
+test('postWithRetry logs metrics counters on failure', async () => {
+  _resetMetricsCounters();
+  const records = [];
+  const logger = {
+    warn: (message) => records.push(JSON.parse(message)),
+    info: () => {},
+  };
+
+  const payload = { session_key: 'metrics-failure' };
+  const ok = await postWithRetry({
+    payload,
+    apiUrl: 'http://localhost:18730/api/activity',
+    logger,
+    postJson: async () => { throw new Error('boom'); },
+    sleep: async () => {},
+    backoffsMs: [0],
+  });
+
+  assert.equal(ok, false);
+  const entry = records.find((record) => record.event === 'plugin_post_failed');
+  assert.ok(entry);
+  assert.equal(entry.metrics.queue_flush_attempted, 1);
+  assert.equal(entry.metrics.queue_flush_failed, 1);
+  assert.equal(entry.metrics.queue_flush_succeeded, 0);
+  assert.equal(entry.metrics.activities_created, 0);
+  assert.equal(entry.metrics.plugin_post_failed, 1);
+  assert.equal(entry.metrics.queue_fallback_enqueued, 0);
+});
+
+test('sendToApi queues payload to markdown file and logs queue depth after retry exhaustion', async () => {
+  _resetMetricsCounters();
   const queueRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clawtivity-plugin-queue-'));
   const payload = { session_key: 'queued-session', model: 'gpt-5' };
+  const warnings = [];
+  const infos = [];
 
   await sendToApi(payload, {
     apiUrl: 'http://localhost:18730/api/activity',
     queueRoot,
-    logger: { warn: () => {} },
+    logger: {
+      warn: (message) => warnings.push(JSON.parse(message)),
+      info: (message) => infos.push(JSON.parse(message)),
+    },
     postJson: async () => {
       throw new Error('down');
     },
@@ -631,4 +687,29 @@ test('sendToApi queues payload to markdown file after retry exhaustion', async (
 
   const body = fs.readFileSync(path.join(queueRoot, files[0]), 'utf8');
   assert.match(body, /"session_key":"queued-session"/);
+  assert.equal(countQueuedEntries(queueRoot), 1);
+  assert.equal(warnings[0].event, 'plugin_post_failed');
+  assert.equal(infos[0].event, 'queue_fallback_enqueued');
+  assert.equal(infos[0].metrics.queue_depth, 1);
+  assert.equal(infos[0].details.queue_depth, 1);
+  assert.equal(infos[0].metrics.queue_flush_attempted, 1);
+  assert.equal(infos[0].metrics.queue_flush_failed, 1);
+  assert.equal(infos[0].metrics.queue_flush_succeeded, 0);
+  assert.equal(infos[0].metrics.activities_created, 0);
+  assert.equal(infos[0].metrics.plugin_post_failed, 1);
+  assert.equal(infos[0].metrics.queue_fallback_enqueued, 1);
+  assert.equal(infos[0].metrics.replay_succeeded, 0);
+  assert.equal(infos[0].metrics.replay_failed, 0);
+  assert.deepEqual(Object.keys(infos[0].metrics).sort(), [
+    'activities_created',
+    'plugin_post_failed',
+    'queue_depth',
+    'queue_fallback_enqueued',
+    'queue_flush_attempted',
+    'queue_flush_failed',
+    'queue_flush_succeeded',
+    'replay_failed',
+    'replay_succeeded',
+  ]);
+  fs.rmSync(queueRoot, { recursive: true, force: true });
 });

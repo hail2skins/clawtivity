@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,23 +36,42 @@ func resolveQueueDir() string {
 	return filepath.Join(home, ".clawtivity", "queue")
 }
 
+func CountQueueDepth(queueRoot string) int {
+	root := strings.TrimSpace(queueRoot)
+	if root == "" {
+		root = resolveQueueDir()
+	}
+	files, err := filepath.Glob(filepath.Join(root, "*.md"))
+	if err != nil {
+		storeQueueDepth(0)
+		return 0
+	}
+	count := 0
+	for _, file := range files {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		count += len(parseQueueEntries(string(body)))
+	}
+	storeQueueDepth(count)
+	return count
+}
+
 func flushQueueOnStartup(db database.Service) {
 	if db == nil {
 		return
 	}
 
 	queueDir := resolveQueueDir()
-	flushed, err := flushQueuedActivities(context.Background(), db, queueDir)
-	if err != nil {
-		fmt.Printf("[clawtivity] queue startup flush failed: %v\n", err)
-		return
-	}
-	if flushed > 0 {
-		fmt.Printf("[clawtivity] queue startup flush imported %d entries\n", flushed)
-	}
+	_, _ = flushQueuedActivitiesWithOptions(context.Background(), db, queueDir, true)
 }
 
 func flushQueuedActivities(ctx context.Context, db database.Service, queueDir string) (int, error) {
+	return flushQueuedActivitiesWithOptions(ctx, db, queueDir, false)
+}
+
+func flushQueuedActivitiesWithOptions(ctx context.Context, db database.Service, queueDir string, startup bool) (int, error) {
 	if strings.TrimSpace(queueDir) == "" {
 		return 0, nil
 	}
@@ -62,11 +80,30 @@ func flushQueuedActivities(ctx context.Context, db database.Service, queueDir st
 		if os.IsNotExist(err) {
 			return 0, nil
 		}
+		incQueueFlushFailed()
+		logEvent("warn", "queue_flush_failed", map[string]any{
+			"queue_root": queueDir,
+			"startup":    startup,
+			"error":      err.Error(),
+		}, CountQueueDepth(queueDir))
 		return 0, err
 	}
 
+	queueDepth := CountQueueDepth(queueDir)
+	incQueueFlushAttempted()
+	logEvent("info", "queue_flush_attempted", map[string]any{
+		"queue_root": queueDir,
+		"startup":    startup,
+	}, queueDepth)
+
 	files, err := filepath.Glob(filepath.Join(queueDir, "*.md"))
 	if err != nil {
+		incQueueFlushFailed()
+		logEvent("warn", "queue_flush_failed", map[string]any{
+			"queue_root": queueDir,
+			"startup":    startup,
+			"error":      err.Error(),
+		}, queueDepth)
 		return 0, err
 	}
 
@@ -74,6 +111,13 @@ func flushQueuedActivities(ctx context.Context, db database.Service, queueDir st
 	for _, filePath := range files {
 		body, err := os.ReadFile(filePath)
 		if err != nil {
+			incQueueFlushFailed()
+			logEvent("warn", "queue_flush_failed", map[string]any{
+				"queue_root": queueDir,
+				"file":       filePath,
+				"startup":    startup,
+				"error":      err.Error(),
+			}, CountQueueDepth(queueDir))
 			return totalFlushed, err
 		}
 
@@ -89,6 +133,21 @@ func flushQueuedActivities(ctx context.Context, db database.Service, queueDir st
 			applyProjectAssociation(&activity, entry.ingest.PromptText, entry.ingest.AssistantText)
 			if err := ensureProjectRegistry(ctx, db, &activity); err != nil {
 				remaining = append(remaining, entry)
+				incQueueFlushFailed()
+				logEvent("warn", "queue_flush_failed", map[string]any{
+					"queue_root":  queueDir,
+					"file":        filePath,
+					"startup":     startup,
+					"error":       err.Error(),
+					"session_key": activity.SessionKey,
+				}, CountQueueDepth(queueDir))
+				logEvent("warn", "replay_failed", map[string]any{
+					"queue_root":  queueDir,
+					"file":        filePath,
+					"startup":     startup,
+					"error":       err.Error(),
+					"session_key": activity.SessionKey,
+				}, CountQueueDepth(queueDir))
 				continue
 			}
 			applyActivityClassification(&activity, classifier.Signals{
@@ -98,12 +157,48 @@ func flushQueuedActivities(ctx context.Context, db database.Service, queueDir st
 			})
 			if err := db.CreateActivity(ctx, &activity); err != nil {
 				remaining = append(remaining, entry)
+				incQueueFlushFailed()
+				logEvent("warn", "queue_flush_failed", map[string]any{
+					"queue_root":  queueDir,
+					"file":        filePath,
+					"startup":     startup,
+					"error":       err.Error(),
+					"session_key": activity.SessionKey,
+				}, CountQueueDepth(queueDir))
+				logEvent("warn", "replay_failed", map[string]any{
+					"queue_root":  queueDir,
+					"file":        filePath,
+					"startup":     startup,
+					"error":       err.Error(),
+					"session_key": activity.SessionKey,
+				}, CountQueueDepth(queueDir))
 				continue
 			}
 			totalFlushed++
+			incQueueFlushSucceeded()
+			queueDepthAfter := CountQueueDepth(queueDir)
+			logEvent("info", "queue_flush_succeeded", map[string]any{
+				"queue_root":  queueDir,
+				"file":        filePath,
+				"startup":     startup,
+				"session_key": activity.SessionKey,
+			}, queueDepthAfter)
+			logEvent("info", "replay_succeeded", map[string]any{
+				"queue_root":  queueDir,
+				"file":        filePath,
+				"startup":     startup,
+				"session_key": activity.SessionKey,
+			}, queueDepthAfter)
 		}
 
 		if err := writeQueueEntries(filePath, remaining); err != nil {
+			incQueueFlushFailed()
+			logEvent("warn", "queue_flush_failed", map[string]any{
+				"queue_root": queueDir,
+				"file":       filePath,
+				"startup":    startup,
+				"error":      err.Error(),
+			}, CountQueueDepth(queueDir))
 			return totalFlushed, err
 		}
 	}
@@ -146,7 +241,9 @@ func writeQueueEntries(filePath string, entries []queuedEntry) error {
 
 	dateLabel := strings.TrimSuffix(filepath.Base(filePath), filepath.Ext(filePath))
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("# Clawtivity Fallback Queue (%s)\n\n", dateLabel))
+	builder.WriteString("# Clawtivity Fallback Queue (")
+	builder.WriteString(dateLabel)
+	builder.WriteString(")\n\n")
 	for _, entry := range entries {
 		builder.WriteString("## queued_at: replay_pending\n")
 		builder.WriteString("```json\n")

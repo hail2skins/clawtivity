@@ -13,6 +13,7 @@ class LogActivityTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.mkdtemp(prefix="clawtivity-log-activity-test-")
         self.queue_dir = Path(self._tmp) / "queue"
+        log_activity.reset_metrics_counters()
 
     def tearDown(self):
         shutil.rmtree(self._tmp, ignore_errors=True)
@@ -125,6 +126,71 @@ class LogActivityTests(unittest.TestCase):
         self.assertIn("```json", body)
         payloads = log_activity._extract_payloads(body)
         self.assertEqual(payloads[0]["session_key"], "s-2")
+
+
+    def test_post_with_retry_logs_structured_failure_and_queue_depth(self):
+        payload = {"session_key": "s-3", "model": "gpt-5"}
+
+        with self.assertLogs("clawtivity.fallback", level="INFO") as captured:
+            with mock.patch.object(log_activity, "_http_post_json", side_effect=RuntimeError("down")):
+                with mock.patch("time.sleep"):
+                    ok = log_activity.post_with_retry(payload, "http://localhost:18730/api/activity", queue_root=self.queue_dir)
+
+        self.assertFalse(ok)
+        entries = [json.loads(record.split(":", 2)[-1]) for record in captured.output]
+        self.assertEqual(entries[0]["event"], "plugin_post_failed")
+        self.assertEqual(entries[-1]["event"], "queue_fallback_enqueued")
+        self.assertEqual(entries[-1]["metrics"]["queue_depth"], 1)
+        fallback_metrics = entries[-1]["metrics"]
+        self.assertEqual(fallback_metrics["queue_fallback_enqueued"], 1)
+        self.assertEqual(fallback_metrics["plugin_post_failed"], 1)
+        metrics = entries[0]["metrics"]
+        self.assertEqual(metrics["activities_created"], 0)
+        self.assertEqual(metrics["queue_flush_attempted"], 0)
+        self.assertEqual(metrics["queue_flush_succeeded"], 0)
+        self.assertEqual(metrics["queue_flush_failed"], 0)
+        self.assertEqual(metrics["plugin_post_failed"], 1)
+        self.assertEqual(metrics["queue_fallback_enqueued"], 0)
+        self.assertEqual(metrics["replay_succeeded"], 0)
+        self.assertEqual(metrics["replay_failed"], 0)
+
+    def test_flush_queue_logs_replay_success_and_failure(self):
+        log_activity.reset_metrics_counters()
+        first = {"session_key": "queued-1", "model": "gpt-5"}
+        second = {"session_key": "queued-2", "model": "gpt-5"}
+        log_activity.enqueue_payload(self.queue_dir, first)
+        log_activity.enqueue_payload(self.queue_dir, second)
+
+        sent = []
+
+        def flaky_post(url, body, timeout=5):
+            payload = json.loads(body.decode("utf-8"))
+            sent.append(payload["session_key"])
+            if payload["session_key"] == "queued-2":
+                raise RuntimeError("still down")
+            return {"ok": True}
+
+        with self.assertLogs("clawtivity.fallback", level="INFO") as captured:
+            with mock.patch.object(log_activity, "_http_post_json", side_effect=flaky_post):
+                with mock.patch("time.sleep"):
+                    log_activity.flush_queue("http://localhost:18730/api/activity", queue_root=self.queue_dir)
+
+        entries = [json.loads(record.split(":", 2)[-1]) for record in captured.output]
+        self.assertTrue(any(entry["event"] == "replay_succeeded" for entry in entries))
+        self.assertTrue(any(entry["event"] == "replay_failed" for entry in entries))
+        attempt_entry = next(entry for entry in entries if entry["event"] == "queue_flush_attempted")
+        self.assertEqual(attempt_entry["metrics"]["queue_flush_attempted"], 1)
+        succeeded_entry = next(entry for entry in entries if entry["event"] == "replay_succeeded")
+        self.assertEqual(succeeded_entry["metrics"]["queue_flush_succeeded"], 1)
+        self.assertEqual(succeeded_entry["metrics"]["activities_created"], 1)
+        self.assertEqual(succeeded_entry["metrics"]["replay_succeeded"], 1)
+        failed_entry = next(entry for entry in entries if entry["event"] == "replay_failed")
+        self.assertEqual(failed_entry["metrics"]["queue_flush_failed"], 1)
+        self.assertEqual(failed_entry["metrics"]["replay_failed"], 1)
+        remaining_files = sorted(self.queue_dir.glob("*.md"))
+        self.assertEqual(len(remaining_files), 1)
+        remaining_payloads = log_activity._extract_payloads(remaining_files[0].read_text(encoding="utf-8"))
+        self.assertEqual([payload["session_key"] for payload in remaining_payloads], ["queued-2"])
 
     def test_flush_queue_on_success(self):
         queued_payload = {"session_key": "queued-1", "model": "gpt-5"}
