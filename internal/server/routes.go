@@ -2,6 +2,8 @@ package server
 
 import (
 	"net/http"
+	"os"
+	"strings"
 
 	_ "clawtivity/docs"
 	"github.com/gin-contrib/cors"
@@ -17,7 +19,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r := gin.Default()
 
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173"}, // Add your frontend URL
+		AllowOrigins:     resolveCorsOrigins(),
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowHeaders:     []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true, // Enable cookies/auth
@@ -44,6 +46,27 @@ func (s *Server) RegisterRoutes() http.Handler {
 	})
 
 	return r
+}
+
+func resolveCorsOrigins() []string {
+	defaultOrigins := []string{"http://localhost:5173"}
+	env := strings.TrimSpace(os.Getenv("CLAWTIVITY_CORS_ORIGINS"))
+	if env == "" {
+		return defaultOrigins
+	}
+
+	parts := strings.Split(env, ",")
+	var trimmed []string
+	for _, part := range parts {
+		candidate := strings.TrimSpace(part)
+		if candidate != "" {
+			trimmed = append(trimmed, candidate)
+		}
+	}
+	if len(trimmed) == 0 {
+		return defaultOrigins
+	}
+	return trimmed
 }
 
 func (s *Server) HelloWorldHandler(c *gin.Context) {

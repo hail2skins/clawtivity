@@ -1,10 +1,12 @@
 package server
 
 import (
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestHelloWorldHandler(t *testing.T) {
@@ -50,5 +52,23 @@ func TestSwaggerRouteRegistered(t *testing.T) {
 
 	if !found {
 		t.Fatal("expected swagger route GET /swagger/*any to be registered")
+	}
+}
+
+func TestResolveCorsOriginsFromEnv(t *testing.T) {
+	t.Setenv("CLAWTIVITY_CORS_ORIGINS", "https://app.com, https://panel.local")
+	got := resolveCorsOrigins()
+	want := []string{"https://app.com", "https://panel.local"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
+func TestResolveCorsOriginsUsesFallback(t *testing.T) {
+	t.Setenv("CLAWTIVITY_CORS_ORIGINS", "   ")
+	got := resolveCorsOrigins()
+	want := []string{"http://localhost:5173"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected fallback %v, got %v", want, got)
 	}
 }

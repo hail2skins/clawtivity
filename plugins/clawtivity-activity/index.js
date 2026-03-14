@@ -3,12 +3,15 @@ const os = require('node:os');
 const fs = require('node:fs');
 
 const DEFAULT_FRESHNESS_MS = 60_000;
-const DEFAULT_BACKOFF_MS = [1000, 2000, 4000];
+const DEFAULT_BACKOFF_SECONDS = [1, 2, 4];
+const DEFAULT_BACKOFF_MS = DEFAULT_BACKOFF_SECONDS.map((seconds) => Math.round(seconds * 1000));
 const DEFAULT_API_URL = 'http://localhost:18730/api/activity';
 const DEFAULT_QUEUE_ROOT = path.join(os.homedir(), '.clawtivity', 'queue');
 const PROJECT_OVERRIDE_PATTERN = /\bproject\b\s*:?\s*([a-zA-Z0-9][a-zA-Z0-9._-]*)/i;
 const PROJECT_PATH_MENTION_PATTERN = /\/projects?\/([a-zA-Z0-9][a-zA-Z0-9._-]*)/i;
 const PROJECT_OVERRIDE_STOPWORDS = new Set(['as', 'is', 'was', 'the', 'a', 'an', 'to', 'for']);
+const QUEUE_ROOT_ENV = 'CLAWTIVITY_QUEUE_ROOT';
+const BACKOFF_SECONDS_ENV = 'CLAWTIVITY_BACKOFF_SECONDS';
 
 function nowIso() {
   return new Date().toISOString();
@@ -676,11 +679,52 @@ async function postWithRetry(options = {}) {
   return false;
 }
 
+function parseSecondsList(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => Number(entry))
+      .filter((n) => Number.isFinite(n));
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? [value] : [];
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    return trimmed
+      .split(',')
+      .map((entry) => Number(entry.trim()))
+      .filter((n) => Number.isFinite(n));
+  }
+  return [];
+}
+
+function resolveBackoffSeconds(pluginConfig) {
+  const envValue = asString(process.env[BACKOFF_SECONDS_ENV], '');
+  const envParsed = parseSecondsList(envValue);
+  if (envParsed.length > 0) {
+    return envParsed;
+  }
+  const configParsed = parseSecondsList(pluginConfig && pluginConfig.backoffSeconds);
+  if (configParsed.length > 0) {
+    return configParsed;
+  }
+  return DEFAULT_BACKOFF_SECONDS;
+}
+
+function resolveBackoffMs(pluginConfig) {
+  return resolveBackoffSeconds(pluginConfig).map((seconds) => Math.max(0, Math.round(seconds * 1000)));
+}
+
 function resolveApiUrl(pluginConfig) {
   return asString(pluginConfig && pluginConfig.apiUrl, DEFAULT_API_URL);
 }
 
 function resolveQueueRoot(pluginConfig) {
+  const envValue = asString(process.env[QUEUE_ROOT_ENV], '');
+  if (envValue) {
+    return envValue;
+  }
   return asString(pluginConfig && pluginConfig.queueRoot, DEFAULT_QUEUE_ROOT);
 }
 
@@ -739,6 +783,7 @@ module.exports = {
     const apiUrl = resolveApiUrl(pluginConfig);
     const queueRoot = resolveQueueRoot(pluginConfig);
     const settleMs = resolveSettleMs(pluginConfig);
+    const backoffsMs = resolveBackoffMs(pluginConfig);
     const configuredProjectTag = asString(pluginConfig.projectTag, '');
     const configuredUserId = asString(pluginConfig.userId, '');
 
@@ -877,7 +922,7 @@ module.exports = {
         fallbackSessionSeed: `agent-end:${channel}:${Date.now()}`,
       });
 
-      return sendToApi(payload, { apiUrl, queueRoot, logger: api.logger });
+      return sendToApi(payload, { apiUrl, queueRoot, logger: api.logger, backoffsMs });
     });
   },
 
@@ -900,6 +945,8 @@ module.exports = {
   coalesceSnapshot,
   settleSnapshot,
   statusFromSuccess,
+  resolveQueueRoot,
+  resolveBackoffMs,
   postWithRetry,
   sendToApi,
 };

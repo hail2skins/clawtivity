@@ -133,6 +133,27 @@ func TestFlushQueueOnStartupUsesConfiguredQueueDir(t *testing.T) {
 	}
 }
 
+func TestResolveQueueDirPrefersQueueRootEnv(t *testing.T) {
+	rootDir := filepath.Join(t.TempDir(), "root")
+	legacyDir := filepath.Join(t.TempDir(), "legacy")
+	t.Setenv("CLAWTIVITY_QUEUE_ROOT", rootDir)
+	t.Setenv("CLAWTIVITY_QUEUE_DIR", legacyDir)
+
+	if got := resolveQueueDir(); got != rootDir {
+		t.Fatalf("expected CLAWTIVITY_QUEUE_ROOT to win, got %q", got)
+	}
+}
+
+func TestResolveQueueDirFallsBackToLegacyQueueDirEnv(t *testing.T) {
+	legacyDir := filepath.Join(t.TempDir(), "legacy")
+	t.Setenv("CLAWTIVITY_QUEUE_ROOT", "")
+	t.Setenv("CLAWTIVITY_QUEUE_DIR", legacyDir)
+
+	if got := resolveQueueDir(); got != legacyDir {
+		t.Fatalf("expected CLAWTIVITY_QUEUE_DIR fallback, got %q", got)
+	}
+}
+
 func newQueueTestAdapter(t *testing.T) (database.Service, func()) {
 	t.Helper()
 

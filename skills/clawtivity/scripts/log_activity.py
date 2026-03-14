@@ -8,21 +8,57 @@ Clawtivity API with retry/backoff, and falls back to markdown queue files.
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import re
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 API_URL = "http://localhost:18730/api/activity"
-BACKOFF_SECONDS = (1, 2, 4)
-QUEUE_ROOT = Path.home() / ".clawtivity" / "queue"
+DEFAULT_BACKOFF_SECONDS = (1, 2, 4)
+DEFAULT_QUEUE_ROOT = Path.home() / ".clawtivity" / "queue"
 PROJECT_OVERRIDE_PATTERN = re.compile(r"\bproject\b\s*:?\s*([a-zA-Z0-9][a-zA-Z0-9._-]*)", re.IGNORECASE)
 PROJECT_PATH_MENTION_PATTERN = re.compile(r"/projects?/([a-zA-Z0-9][a-zA-Z0-9._-]*)", re.IGNORECASE)
 PROJECT_OVERRIDE_STOPWORDS = {"as", "is", "was", "the", "a", "an", "to", "for"}
+
+
+def _parse_seconds(value: str) -> Tuple[int, ...]:
+    if not value:
+        return ()
+    entries = re.split(r"[\s,]+", value.strip())
+    out = []
+    for entry in entries:
+        if not entry:
+            continue
+        try:
+            number = float(entry)
+        except ValueError:
+            continue
+        if not math.isfinite(number):
+            continue
+        out.append(int(number))
+    return tuple(out)
+
+
+def resolve_backoff_seconds() -> Tuple[int, ...]:
+    env_value = os.environ.get("CLAWTIVITY_BACKOFF_SECONDS", "").strip()
+    parsed = _parse_seconds(env_value)
+    if parsed:
+        return parsed
+    return DEFAULT_BACKOFF_SECONDS
+
+
+def resolve_queue_root(cli_value: Optional[str] = None) -> Path:
+    if cli_value:
+        return Path(cli_value).expanduser()
+    env_value = os.environ.get("CLAWTIVITY_QUEUE_ROOT", "").strip()
+    if env_value:
+        return Path(env_value).expanduser()
+    return DEFAULT_QUEUE_ROOT
 
 
 def _http_post_json(url: str, body: bytes, timeout: int = 5):
@@ -231,7 +267,8 @@ def _write_payloads(path: Path, payloads: List[Dict]):
     path.write_text("".join(lines), encoding="utf-8")
 
 
-def flush_queue(url: str, queue_root: Path = QUEUE_ROOT):
+def flush_queue(url: str, queue_root: Optional[Path] = None):
+    queue_root = queue_root or resolve_queue_root()
     if not queue_root.exists():
         return
 
@@ -248,10 +285,18 @@ def flush_queue(url: str, queue_root: Path = QUEUE_ROOT):
         _write_payloads(path, remaining)
 
 
-def post_with_retry(payload: Dict, url: str, queue_root: Path = QUEUE_ROOT, flush_on_success: bool = True) -> bool:
+def post_with_retry(
+    payload: Dict,
+    url: str,
+    queue_root: Optional[Path] = None,
+    backoff_seconds: Optional[Tuple[int, ...]] = None,
+    flush_on_success: bool = True,
+) -> bool:
+    queue_root = queue_root or resolve_queue_root()
+    backoff_seconds = backoff_seconds or resolve_backoff_seconds()
     body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
 
-    attempts = len(BACKOFF_SECONDS)
+    attempts = len(backoff_seconds)
     for idx in range(attempts):
         try:
             _http_post_json(url, body)
@@ -260,7 +305,7 @@ def post_with_retry(payload: Dict, url: str, queue_root: Path = QUEUE_ROOT, flus
             return True
         except (HTTPError, URLError, RuntimeError, ValueError):
             if idx < attempts - 1:
-                time.sleep(BACKOFF_SECONDS[idx])
+                time.sleep(backoff_seconds[idx])
 
     enqueue_payload(queue_root, payload)
     return False
@@ -283,10 +328,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Send OpenClaw activity to Clawtivity API.")
     parser.add_argument("--api-url", default=os.environ.get("CLAWTIVITY_API_URL", API_URL))
     parser.add_argument("--flush-only", action="store_true", help="Only flush queued entries.")
-    parser.add_argument("--queue-root", default=str(QUEUE_ROOT))
+    parser.add_argument("--queue-root", default=None)
     args = parser.parse_args()
 
-    queue_root = Path(args.queue_root).expanduser()
+    queue_root = resolve_queue_root(args.queue_root)
 
     if args.flush_only:
         flush_queue(args.api_url, queue_root=queue_root)

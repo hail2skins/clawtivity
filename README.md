@@ -172,6 +172,12 @@ Optional plugin config fields (in OpenClaw plugin config):
 - `projectTag`
 - `userId`
 
+### Environment Configuration
+
+- `CLAWTIVITY_CORS_ORIGINS` — comma-separated list of allowed CORS origins for the API (defaults to `http://localhost:5173`).
+- `CLAWTIVITY_QUEUE_ROOT` — shared directory for the plugin/script fallback queue (defaults to `~/.clawtivity/queue`).
+- `CLAWTIVITY_BACKOFF_SECONDS` — comma-separated backoff seconds used by both the JS plugin and Python fallback script (defaults to `1,2,4`).
+
 ### Retry/Fallback Behavior
 
 - POST target: `http://localhost:18730/api/activity`
@@ -184,7 +190,7 @@ Retry/fallback behavior:
 - skill script path: retry + fallback queue + replay in `skills/clawtivity/scripts/log_activity.py` (optional utility)
 
 Queue replay behavior:
-- API startup automatically drains queue files from `~/.clawtivity/queue` (or `CLAWTIVITY_QUEUE_DIR`)
+- API startup automatically drains queue files from `~/.clawtivity/queue` (or `CLAWTIVITY_QUEUE_ROOT`; legacy `CLAWTIVITY_QUEUE_DIR` is still honored)
 - successfully imported entries are removed from queue files
 - empty queue files are deleted
 

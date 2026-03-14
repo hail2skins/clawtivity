@@ -22,6 +22,10 @@ type queuedEntry struct {
 }
 
 func resolveQueueDir() string {
+	if value := strings.TrimSpace(os.Getenv("CLAWTIVITY_QUEUE_ROOT")); value != "" {
+		return value
+	}
+
 	if value := strings.TrimSpace(os.Getenv("CLAWTIVITY_QUEUE_DIR")); value != "" {
 		return value
 	}

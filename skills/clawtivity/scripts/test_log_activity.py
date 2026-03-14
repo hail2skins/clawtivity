@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -30,6 +31,54 @@ class LogActivityTests(unittest.TestCase):
                     log_activity.project_from_path_mention(case["prompt_text"]),
                     case["expected_path_mention"],
                 )
+
+    def test_resolve_queue_root_prefers_environment(self):
+        env_name = "CLAWTIVITY_QUEUE_ROOT"
+        original = os.environ.get(env_name)
+        os.environ[env_name] = str(self.queue_dir / "env")
+        try:
+            result = log_activity.resolve_queue_root()
+            self.assertEqual(str(result), str(self.queue_dir / "env"))
+        finally:
+            if original is None:
+                os.environ.pop(env_name, None)
+            else:
+                os.environ[env_name] = original
+
+    def test_resolve_queue_root_falls_back_to_default(self):
+        env_name = "CLAWTIVITY_QUEUE_ROOT"
+        original = os.environ.get(env_name)
+        os.environ.pop(env_name, None)
+        try:
+            result = log_activity.resolve_queue_root()
+            self.assertEqual(str(result), str(log_activity.DEFAULT_QUEUE_ROOT))
+        finally:
+            if original is not None:
+                os.environ[env_name] = original
+
+    def test_resolve_backoff_seconds_reads_environment(self):
+        env_name = "CLAWTIVITY_BACKOFF_SECONDS"
+        original = os.environ.get(env_name)
+        os.environ[env_name] = "2,5"
+        try:
+            result = log_activity.resolve_backoff_seconds()
+            self.assertEqual(result, (2, 5))
+        finally:
+            if original is None:
+                os.environ.pop(env_name, None)
+            else:
+                os.environ[env_name] = original
+
+    def test_resolve_backoff_seconds_returns_default_when_missing(self):
+        env_name = "CLAWTIVITY_BACKOFF_SECONDS"
+        original = os.environ.get(env_name)
+        os.environ.pop(env_name, None)
+        try:
+            result = log_activity.resolve_backoff_seconds()
+            self.assertEqual(result, log_activity.DEFAULT_BACKOFF_SECONDS)
+        finally:
+            if original is not None:
+                os.environ[env_name] = original
 
     def test_normalize_payload_resolves_project_from_workspace_context(self):
         workspace_dir = Path(self._tmp) / "projects" / "clawtivity"

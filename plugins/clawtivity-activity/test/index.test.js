@@ -21,6 +21,8 @@ const {
   statusFromSuccess,
   coalesceSnapshot,
   settleSnapshot,
+  resolveQueueRoot,
+  resolveBackoffMs,
   postWithRetry,
   sendToApi,
 } = require('../index.js');
@@ -273,6 +275,70 @@ test('resolveProjectContext ignores connector words after project', () => {
   });
   assert.equal(got.projectTag, 'workspace');
   assert.equal(got.projectReason, 'fallback:workspace');
+});
+
+test('resolveQueueRoot honors environment overrides', () => {
+  const envName = 'CLAWTIVITY_QUEUE_ROOT';
+  const original = process.env[envName];
+  process.env[envName] = '/tmp/env-queue';
+  try {
+    const got = resolveQueueRoot({ queueRoot: '/tmp/config-queue' });
+    assert.equal(got, '/tmp/env-queue');
+  } finally {
+    if (original === undefined) {
+      delete process.env[envName];
+    } else {
+      process.env[envName] = original;
+    }
+  }
+});
+
+test('resolveQueueRoot falls back to plugin config when env is missing', () => {
+  const envName = 'CLAWTIVITY_QUEUE_ROOT';
+  const original = process.env[envName];
+  delete process.env[envName];
+  try {
+    const got = resolveQueueRoot({ queueRoot: '/tmp/config-queue' });
+    assert.equal(got, '/tmp/config-queue');
+  } finally {
+    if (original === undefined) {
+      delete process.env[envName];
+    } else {
+      process.env[envName] = original;
+    }
+  }
+});
+
+test('resolveBackoffMs reads seconds from the environment', () => {
+  const envName = 'CLAWTIVITY_BACKOFF_SECONDS';
+  const original = process.env[envName];
+  process.env[envName] = '2,5';
+  try {
+    const got = resolveBackoffMs({ backoffSeconds: [10, 20] });
+    assert.deepEqual(got, [2000, 5000]);
+  } finally {
+    if (original === undefined) {
+      delete process.env[envName];
+    } else {
+      process.env[envName] = original;
+    }
+  }
+});
+
+test('resolveBackoffMs falls back to plugin config when env is absent', () => {
+  const envName = 'CLAWTIVITY_BACKOFF_SECONDS';
+  const original = process.env[envName];
+  delete process.env[envName];
+  try {
+    const got = resolveBackoffMs({ backoffSeconds: [3, 7] });
+    assert.deepEqual(got, [3000, 7000]);
+  } finally {
+    if (original === undefined) {
+      delete process.env[envName];
+    } else {
+      process.env[envName] = original;
+    }
+  }
 });
 
 test('shared prompt spec cases stay aligned with parser helpers', () => {
