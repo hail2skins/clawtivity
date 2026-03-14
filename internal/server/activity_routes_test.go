@@ -59,6 +59,72 @@ func TestPostActivityCreatesEntry(t *testing.T) {
 	}
 }
 
+func TestPostActivityAllowsWhenAPIKeyUnset(t *testing.T) {
+	t.Setenv("CLAWTIVITY_API_KEY", "")
+	handler, cleanup := newTestHandler(t)
+	defer cleanup()
+
+	payload := map[string]any{
+		"session_key": "session-auth-open",
+		"model":       "gpt-5",
+		"channel":     "webchat",
+		"status":      "success",
+		"user_id":     "art",
+	}
+
+	rr := performJSON(t, handler, http.MethodPost, "/api/activity", payload)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, rr.Code, rr.Body.String())
+	}
+}
+
+func TestPostActivityRejectsMissingOrWrongAPIKeyWhenConfigured(t *testing.T) {
+	t.Setenv("CLAWTIVITY_API_KEY", "secret-123")
+	handler, cleanup := newTestHandler(t)
+	defer cleanup()
+
+	payload := map[string]any{
+		"session_key": "session-auth-closed",
+		"model":       "gpt-5",
+		"channel":     "webchat",
+		"status":      "success",
+		"user_id":     "art",
+	}
+
+	rrMissing := performJSON(t, handler, http.MethodPost, "/api/activity", payload)
+	if rrMissing.Code != http.StatusUnauthorized {
+		t.Fatalf("expected missing key status %d, got %d body=%s", http.StatusUnauthorized, rrMissing.Code, rrMissing.Body.String())
+	}
+
+	rrWrong := performJSONWithHeaders(t, handler, http.MethodPost, "/api/activity", payload, map[string]string{
+		"X-API-Key": "wrong-key",
+	})
+	if rrWrong.Code != http.StatusUnauthorized {
+		t.Fatalf("expected wrong key status %d, got %d body=%s", http.StatusUnauthorized, rrWrong.Code, rrWrong.Body.String())
+	}
+}
+
+func TestPostActivityAcceptsCorrectAPIKeyWhenConfigured(t *testing.T) {
+	t.Setenv("CLAWTIVITY_API_KEY", "secret-123")
+	handler, cleanup := newTestHandler(t)
+	defer cleanup()
+
+	payload := map[string]any{
+		"session_key": "session-auth-ok",
+		"model":       "gpt-5",
+		"channel":     "webchat",
+		"status":      "success",
+		"user_id":     "art",
+	}
+
+	rr := performJSONWithHeaders(t, handler, http.MethodPost, "/api/activity", payload, map[string]string{
+		"X-API-Key": "secret-123",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, rr.Code, rr.Body.String())
+	}
+}
+
 func TestPostActivityAutoCategorizesAndSetsReason(t *testing.T) {
 	handler, cleanup := newTestHandler(t)
 	defer cleanup()
@@ -622,6 +688,10 @@ func createActivity(t *testing.T, handler http.Handler, payload map[string]any) 
 }
 
 func performJSON(t *testing.T, handler http.Handler, method, path string, payload map[string]any) *httptest.ResponseRecorder {
+	return performJSONWithHeaders(t, handler, method, path, payload, nil)
+}
+
+func performJSONWithHeaders(t *testing.T, handler http.Handler, method, path string, payload map[string]any, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	body, err := json.Marshal(payload)
@@ -634,6 +704,9 @@ func performJSON(t *testing.T, handler http.Handler, method, path string, payloa
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)

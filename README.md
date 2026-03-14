@@ -63,6 +63,7 @@ make test
 
 - `POST /api/activity`
   - Create an activity entry.
+  - Optional hardening: if `CLAWTIVITY_API_KEY` is set, clients must send `X-API-Key: <value>`.
 - `GET /api/activity`
   - List activity entries.
   - Supported query params:
@@ -175,6 +176,7 @@ Optional plugin config fields (in OpenClaw plugin config):
 ### Environment Configuration
 
 - `CLAWTIVITY_CORS_ORIGINS` — comma-separated list of allowed CORS origins for the API (defaults to `http://localhost:5173`).
+- `CLAWTIVITY_API_KEY` — optional API key for `POST /api/activity`; when set, requests must include matching `X-API-Key`.
 - `CLAWTIVITY_QUEUE_ROOT` — shared directory for the plugin/script fallback queue (defaults to `~/.clawtivity/queue`).
 - `CLAWTIVITY_BACKOFF_SECONDS` — comma-separated backoff seconds used by both the JS plugin and Python fallback script (defaults to `1,2,4`).
 

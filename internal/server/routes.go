@@ -21,14 +21,14 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     resolveCorsOrigins(),
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowHeaders:     []string{"Accept", "Authorization", "Content-Type"},
+		AllowHeaders:     []string{"Accept", "Authorization", "Content-Type", "X-API-Key"},
 		AllowCredentials: true, // Enable cookies/auth
 	}))
 
 	r.GET("/", s.HelloWorldHandler)
 
 	r.GET("/health", s.healthHandler)
-	r.POST("/api/activity", s.createActivityHandler)
+	r.POST("/api/activity", activityAPIKeyMiddleware(), s.createActivityHandler)
 	r.GET("/api/activity", s.listActivitiesHandler)
 	r.GET("/api/activity/summary", s.activitySummaryHandler)
 	r.GET("/api/projects", s.listProjectsHandler)
@@ -67,6 +67,24 @@ func resolveCorsOrigins() []string {
 		return defaultOrigins
 	}
 	return trimmed
+}
+
+func activityAPIKeyMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		expectedKey := strings.TrimSpace(os.Getenv("CLAWTIVITY_API_KEY"))
+		if expectedKey == "" {
+			c.Next()
+			return
+		}
+
+		providedKey := strings.TrimSpace(c.GetHeader("X-API-Key"))
+		if providedKey == "" || providedKey != expectedKey {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+
+		c.Next()
+	}
 }
 
 func (s *Server) HelloWorldHandler(c *gin.Context) {
