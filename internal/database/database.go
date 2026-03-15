@@ -796,18 +796,55 @@ func (s *service) lookupReferencePricing(ctx context.Context, model string) (Mod
 }
 
 func providerQualifiedModelCandidates(model string) []string {
+	candidates := append([]string{}, explicitModelPricingAliases(model)...)
 	if strings.Contains(model, "/") {
+		return candidates
+	}
+
+	candidates = append(candidates,
+		"openai/"+model,
+		"anthropic/"+model,
+		"google/"+model,
+		"moonshotai/"+model,
+		"meta-llama/"+model,
+		"x-ai/"+model,
+	)
+
+	return uniqueStrings(candidates)
+}
+
+func explicitModelPricingAliases(model string) []string {
+	switch strings.TrimSpace(model) {
+	case "gpt-5-codex-mini", "openai/gpt-5-codex-mini":
+		return []string{
+			"gpt-5-mini",
+			"openai/gpt-5-mini",
+		}
+	default:
+		return nil
+	}
+}
+
+func uniqueStrings(values []string) []string {
+	if len(values) == 0 {
 		return nil
 	}
 
-	return []string{
-		"openai/" + model,
-		"anthropic/" + model,
-		"google/" + model,
-		"moonshotai/" + model,
-		"meta-llama/" + model,
-		"x-ai/" + model,
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
 	}
+
+	return result
 }
 
 func bootstrapOpenRouterModelPricing(ctx context.Context, db *gorm.DB) error {

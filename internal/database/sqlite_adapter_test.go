@@ -430,6 +430,44 @@ func TestCreateActivityComputesReferenceCostEstimateFromProviderQualifiedPricing
 	}
 }
 
+func TestCreateActivityComputesReferenceCostEstimateFromOpenAICodexMiniAlias(t *testing.T) {
+	disableOpenRouterBootstrap(t)
+	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
+
+	adapter, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected adapter to initialize: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = adapter.Close()
+	})
+
+	svc := adapter.(*service)
+	activity := ActivityFeed{
+		SessionKey: "session-cost-4",
+		Model:      "gpt-5-codex-mini",
+		TokensIn:   471355,
+		TokensOut:  6527,
+		DurationMS: 1000,
+		ProjectID:  mustProjectID(t, svc, "clawtivity"),
+		ProjectTag: "clawtivity",
+		Category:   "general",
+		Thinking:   "medium",
+		Reasoning:  false,
+		Channel:    "webchat",
+		Status:     "success",
+		UserID:     "u1",
+	}
+
+	if err := adapter.CreateActivity(t.Context(), &activity); err != nil {
+		t.Fatalf("expected create activity to succeed: %v", err)
+	}
+
+	if !nearlyEqual(activity.CostEstimate, 0.13089275) {
+		t.Fatalf("expected computed cost_estimate 0.13089275, got %.10f", activity.CostEstimate)
+	}
+}
+
 func TestNewSQLiteAdapterSeedsReferenceModelPricingCatalog(t *testing.T) {
 	disableOpenRouterBootstrap(t)
 	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
