@@ -64,6 +64,7 @@ make test
 - `POST /api/activity`
   - Create an activity entry.
   - Optional hardening: if `CLAWTIVITY_API_KEY` is set, clients must send `X-API-Key: <value>`.
+  - `cost_estimate` is stored as a local reference/API-equivalent estimate from `model_pricing`; it is not guaranteed billed spend.
 - `GET /api/activity`
   - List activity entries.
   - Supported query params:
@@ -92,7 +93,7 @@ make test
 - `model_pricing`
   - Local reference pricing catalog seeded at API startup/migration time.
   - Stores provider/model pricing metadata (`effective_from`, input/output per-1M rates, optional reasoning rate, source, and verification fields).
-  - Intended as the runtime source of truth for later cost estimation work; it does not depend on live provider pricing fetches.
+  - Intended as the runtime source of truth for reference cost estimation work; it does not depend on live provider pricing fetches during activity ingest.
   - Bootstrap behavior:
     - static seed rows are always loaded idempotently
     - if no local `openrouter` pricing rows exist yet, the API attempts a one-time import from `https://openrouter.ai/api/v1/models`

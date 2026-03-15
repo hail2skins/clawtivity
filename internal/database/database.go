@@ -144,6 +144,7 @@ type Service interface {
 	ListProjects(ctx context.Context, status string) ([]Project, error)
 	ListProjectsWithStats(ctx context.Context, status string) ([]ProjectSummary, error)
 	ListModelPricing(ctx context.Context, provider string) ([]ModelPricing, error)
+	ResolveReferenceCost(ctx context.Context, model string, tokensIn, tokensOut int) (float64, bool, error)
 
 	// Close terminates the database connection.
 	Close() error
@@ -297,6 +298,15 @@ func (s *service) CreateActivity(ctx context.Context, activity *ActivityFeed) er
 	if strings.TrimSpace(activity.ProjectID) == "" {
 		return errors.New("project_id is required")
 	}
+	costEstimate, matched, err := s.ResolveReferenceCost(ctx, activity.Model, activity.TokensIn, activity.TokensOut)
+	if err != nil {
+		return err
+	}
+	if matched {
+		activity.CostEstimate = costEstimate
+	} else {
+		activity.CostEstimate = 0
+	}
 	activity.LegacyProjectTag = strings.TrimSpace(strings.ToLower(activity.ProjectTag))
 	return s.db.WithContext(ctx).Create(activity).Error
 }
@@ -449,6 +459,18 @@ func (s *service) ListModelPricing(ctx context.Context, provider string) ([]Mode
 		return nil, err
 	}
 	return rows, nil
+}
+
+func (s *service) ResolveReferenceCost(ctx context.Context, model string, tokensIn, tokensOut int) (float64, bool, error) {
+	pricing, matched, err := s.lookupReferencePricing(ctx, model)
+	if err != nil || !matched {
+		return 0, false, err
+	}
+
+	inputCost := (float64(tokensIn) / 1_000_000) * pricing.InputCostPer1M
+	outputCost := (float64(tokensOut) / 1_000_000) * pricing.OutputCostPer1M
+
+	return inputCost + outputCost, true, nil
 }
 
 // Close closes the database connection.
@@ -729,6 +751,28 @@ func loadSeededModelPricing() ([]ModelPricing, error) {
 	}
 
 	return rows, nil
+}
+
+func (s *service) lookupReferencePricing(ctx context.Context, model string) (ModelPricing, bool, error) {
+	normalizedModel := strings.TrimSpace(model)
+	if normalizedModel == "" || normalizedModel == "unknown-model" {
+		return ModelPricing{}, false, nil
+	}
+
+	var pricing ModelPricing
+	err := s.db.WithContext(ctx).
+		Where("model = ?", normalizedModel).
+		Order("CASE WHEN provider = 'openrouter' THEN 0 ELSE 1 END").
+		Order("effective_from desc").
+		First(&pricing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ModelPricing{}, false, nil
+	}
+	if err != nil {
+		return ModelPricing{}, false, err
+	}
+
+	return pricing, true, nil
 }
 
 func bootstrapOpenRouterModelPricing(ctx context.Context, db *gorm.DB) error {

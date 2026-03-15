@@ -298,6 +298,84 @@ func TestProjectUpsertAndList(t *testing.T) {
 	}
 }
 
+func TestCreateActivityComputesReferenceCostEstimateFromLocalPricing(t *testing.T) {
+	disableOpenRouterBootstrap(t)
+	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
+
+	adapter, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected adapter to initialize: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = adapter.Close()
+	})
+
+	svc := adapter.(*service)
+	activity := ActivityFeed{
+		SessionKey:   "session-cost-1",
+		Model:        "gpt-5",
+		TokensIn:     120,
+		TokensOut:    80,
+		CostEstimate: 999.0,
+		DurationMS:   1000,
+		ProjectID:    mustProjectID(t, svc, "clawtivity"),
+		ProjectTag:   "clawtivity",
+		Category:     "general",
+		Thinking:     "medium",
+		Reasoning:    false,
+		Channel:      "webchat",
+		Status:       "success",
+		UserID:       "u1",
+	}
+
+	if err := adapter.CreateActivity(t.Context(), &activity); err != nil {
+		t.Fatalf("expected create activity to succeed: %v", err)
+	}
+
+	if !nearlyEqual(activity.CostEstimate, 0.0015) {
+		t.Fatalf("expected computed cost_estimate 0.0015, got %.10f", activity.CostEstimate)
+	}
+}
+
+func TestCreateActivityLeavesCostEstimateZeroWhenPricingUnknown(t *testing.T) {
+	disableOpenRouterBootstrap(t)
+	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
+
+	adapter, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected adapter to initialize: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = adapter.Close()
+	})
+
+	svc := adapter.(*service)
+	activity := ActivityFeed{
+		SessionKey:   "session-cost-2",
+		Model:        "unknown-provider/unknown-model",
+		TokensIn:     100,
+		TokensOut:    50,
+		CostEstimate: 9.99,
+		DurationMS:   1000,
+		ProjectID:    mustProjectID(t, svc, "clawtivity"),
+		ProjectTag:   "clawtivity",
+		Category:     "general",
+		Thinking:     "medium",
+		Reasoning:    false,
+		Channel:      "webchat",
+		Status:       "success",
+		UserID:       "u1",
+	}
+
+	if err := adapter.CreateActivity(t.Context(), &activity); err != nil {
+		t.Fatalf("expected create activity to succeed: %v", err)
+	}
+
+	if activity.CostEstimate != 0 {
+		t.Fatalf("expected unknown pricing to yield cost_estimate 0, got %.10f", activity.CostEstimate)
+	}
+}
+
 func TestNewSQLiteAdapterSeedsReferenceModelPricingCatalog(t *testing.T) {
 	disableOpenRouterBootstrap(t)
 	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")

@@ -57,6 +57,9 @@ func TestPostActivityCreatesEntry(t *testing.T) {
 	if got.ProjectReason != "prompt_override" {
 		t.Fatalf("expected project_reason prompt_override, got %q", got.ProjectReason)
 	}
+	if !nearlyEqual(got.CostEstimate, 0.0015) {
+		t.Fatalf("expected recomputed reference cost_estimate 0.0015, got %.10f", got.CostEstimate)
+	}
 }
 
 func TestPostActivityAllowsWhenAPIKeyUnset(t *testing.T) {
@@ -584,8 +587,8 @@ func TestGetActivitySummaryAggregatesStats(t *testing.T) {
 	if got.TokensOutTotal != 75 {
 		t.Fatalf("expected tokens_out_total 75, got %d", got.TokensOutTotal)
 	}
-	if got.CostTotal != 0.14 {
-		t.Fatalf("expected cost_total 0.14, got %f", got.CostTotal)
+	if !nearlyEqual(got.CostTotal, 0.001475) {
+		t.Fatalf("expected cost_total 0.001475, got %f", got.CostTotal)
 	}
 	if got.DurationMSTotal != 1600 {
 		t.Fatalf("expected duration_ms_total 1600, got %d", got.DurationMSTotal)
@@ -711,4 +714,12 @@ func performJSONWithHeaders(t *testing.T, handler http.Handler, method, path str
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 	return rr
+}
+
+func nearlyEqual(a, b float64) bool {
+	const epsilon = 0.000001
+	if a > b {
+		return a-b < epsilon
+	}
+	return b-a < epsilon
 }
