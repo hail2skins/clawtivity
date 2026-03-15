@@ -11,6 +11,7 @@ import (
 )
 
 func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
+	disableOpenRouterBootstrap(t)
 	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
 
 	adapter, err := NewSQLiteAdapter(dbPath)
@@ -128,6 +129,7 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 }
 
 func TestSQLiteAdapterGeneratesUUIDPrimaryKeys(t *testing.T) {
+	disableOpenRouterBootstrap(t)
 	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
 
 	adapter, err := NewSQLiteAdapter(dbPath)
@@ -182,6 +184,7 @@ func TestSQLiteAdapterGeneratesUUIDPrimaryKeys(t *testing.T) {
 }
 
 func TestActivityFeedPersistsNewFields(t *testing.T) {
+	disableOpenRouterBootstrap(t)
 	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
 
 	adapter, err := NewSQLiteAdapter(dbPath)
@@ -251,6 +254,7 @@ func TestActivityFeedPersistsNewFields(t *testing.T) {
 }
 
 func TestProjectUpsertAndList(t *testing.T) {
+	disableOpenRouterBootstrap(t)
 	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
 
 	adapter, err := NewSQLiteAdapter(dbPath)
@@ -295,6 +299,7 @@ func TestProjectUpsertAndList(t *testing.T) {
 }
 
 func TestNewSQLiteAdapterSeedsReferenceModelPricingCatalog(t *testing.T) {
+	disableOpenRouterBootstrap(t)
 	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
 
 	adapter, err := NewSQLiteAdapter(dbPath)
@@ -314,6 +319,9 @@ func TestNewSQLiteAdapterSeedsReferenceModelPricingCatalog(t *testing.T) {
 	if len(prices) == 0 {
 		t.Fatal("expected seeded model pricing rows")
 	}
+	if len(prices) != 4 {
+		t.Fatalf("expected 4 seeded pricing rows without bootstrap import, got %d", len(prices))
+	}
 
 	assertSeededModelPricing(t, prices, "openai", "gpt-5", 2.50, 15.0, false)
 	assertSeededModelPricing(t, prices, "openrouter", "moonshotai/kimi-k2.5", 0.45, 2.20, false)
@@ -321,6 +329,7 @@ func TestNewSQLiteAdapterSeedsReferenceModelPricingCatalog(t *testing.T) {
 }
 
 func TestNewSQLiteAdapterSeedsModelPricingIdempotently(t *testing.T) {
+	disableOpenRouterBootstrap(t)
 	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
 
 	first, err := NewSQLiteAdapter(dbPath)
@@ -359,6 +368,14 @@ func TestNewSQLiteAdapterSeedsModelPricingIdempotently(t *testing.T) {
 func TestBootstrapOpenRouterModelPricingImportsCatalogWhenMissing(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
 
+	originalFetch := openRouterModelsFetcher
+	openRouterModelsFetcher = func(context.Context) ([]ModelPricing, error) {
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		openRouterModelsFetcher = originalFetch
+	})
+
 	adapter, err := NewSQLiteAdapter(dbPath)
 	if err != nil {
 		t.Fatalf("expected adapter to initialize: %v", err)
@@ -368,11 +385,7 @@ func TestBootstrapOpenRouterModelPricingImportsCatalogWhenMissing(t *testing.T) 
 	})
 
 	svc := adapter.(*service)
-	if err := svc.db.Where("provider = ?", "openrouter").Delete(&ModelPricing{}).Error; err != nil {
-		t.Fatalf("expected openrouter rows to delete: %v", err)
-	}
 
-	originalFetch := openRouterModelsFetcher
 	openRouterModelsFetcher = func(context.Context) ([]ModelPricing, error) {
 		now := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
 		reasoning := 3.5
@@ -404,10 +417,6 @@ func TestBootstrapOpenRouterModelPricingImportsCatalogWhenMissing(t *testing.T) 
 			},
 		}, nil
 	}
-	t.Cleanup(func() {
-		openRouterModelsFetcher = originalFetch
-	})
-
 	if err := bootstrapOpenRouterModelPricing(context.Background(), svc.db); err != nil {
 		t.Fatalf("expected bootstrap import to succeed: %v", err)
 	}
@@ -416,16 +425,25 @@ func TestBootstrapOpenRouterModelPricingImportsCatalogWhenMissing(t *testing.T) 
 	if err := svc.db.Where("provider = ?", "openrouter").Order("model asc").Find(&prices).Error; err != nil {
 		t.Fatalf("expected imported rows to be queryable: %v", err)
 	}
-	if len(prices) != 2 {
-		t.Fatalf("expected 2 imported openrouter rows, got %d", len(prices))
+	if len(prices) != 3 {
+		t.Fatalf("expected 3 openrouter rows after import upsert, got %d", len(prices))
 	}
 	assertSeededModelPricing(t, prices, "openrouter", "moonshotai/kimi-k2.5", 2.0, 6.0, false)
 	assertSeededModelPricing(t, prices, "openrouter", "openrouter/hunter-alpha", 0.0, 0.0, false)
+
+	var imported ModelPricing
+	if err := svc.db.Where("provider = ? AND model = ?", "openrouter", "moonshotai/kimi-k2.5").First(&imported).Error; err != nil {
+		t.Fatalf("expected imported kimi row to exist: %v", err)
+	}
+	if imported.Source != openRouterModelsAPIURL {
+		t.Fatalf("expected imported source %q, got %q", openRouterModelsAPIURL, imported.Source)
+	}
 }
 
-func TestBootstrapOpenRouterModelPricingSkipsWhenRowsAlreadyExist(t *testing.T) {
+func TestBootstrapOpenRouterModelPricingSkipsWhenImportedRowsAlreadyExist(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
 
+	disableOpenRouterBootstrap(t)
 	adapter, err := NewSQLiteAdapter(dbPath)
 	if err != nil {
 		t.Fatalf("expected adapter to initialize: %v", err)
@@ -446,15 +464,33 @@ func TestBootstrapOpenRouterModelPricingSkipsWhenRowsAlreadyExist(t *testing.T) 
 		openRouterModelsFetcher = originalFetch
 	})
 
+	now := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
+	imported := ModelPricing{
+		Provider:          "openrouter",
+		Model:             "x-ai/grok-4.20-beta",
+		EffectiveFrom:     now,
+		InputCostPer1M:    2.0,
+		OutputCostPer1M:   6.0,
+		Currency:          "USD",
+		Source:            openRouterModelsAPIURL,
+		IsEstimated:       false,
+		LastVerifiedAt:    &now,
+		VerificationNotes: "Imported from OpenRouter models endpoint.",
+	}
+	if err := svc.db.Create(&imported).Error; err != nil {
+		t.Fatalf("expected imported row create to succeed: %v", err)
+	}
+
 	if err := bootstrapOpenRouterModelPricing(context.Background(), svc.db); err != nil {
 		t.Fatalf("expected bootstrap skip to succeed: %v", err)
 	}
 	if called {
-		t.Fatal("expected bootstrap import to skip fetch when openrouter rows already exist")
+		t.Fatal("expected bootstrap import to skip fetch when imported openrouter rows already exist")
 	}
 }
 
 func TestNewSQLiteAdapterBackfillsLegacyProjectTagWithoutLock(t *testing.T) {
+	disableOpenRouterBootstrap(t)
 	dbPath := filepath.Join(t.TempDir(), "legacy-clawtivity.db")
 
 	legacyDB, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
@@ -577,10 +613,10 @@ func assertSeededModelPricing(t *testing.T, prices []ModelPricing, provider, mod
 		if price.Provider != provider || price.Model != model {
 			continue
 		}
-		if price.InputCostPer1M != wantInput {
+		if !nearlyEqual(price.InputCostPer1M, wantInput) {
 			t.Fatalf("expected %s/%s input cost %.2f, got %.2f", provider, model, wantInput, price.InputCostPer1M)
 		}
-		if price.OutputCostPer1M != wantOutput {
+		if !nearlyEqual(price.OutputCostPer1M, wantOutput) {
 			t.Fatalf("expected %s/%s output cost %.2f, got %.2f", provider, model, wantOutput, price.OutputCostPer1M)
 		}
 		if price.IsEstimated != wantEstimated {
@@ -599,4 +635,24 @@ func assertSeededModelPricing(t *testing.T, prices []ModelPricing, provider, mod
 	}
 
 	t.Fatalf("expected seeded model pricing row for %s/%s", provider, model)
+}
+
+func disableOpenRouterBootstrap(t *testing.T) {
+	t.Helper()
+
+	originalFetch := openRouterModelsFetcher
+	openRouterModelsFetcher = func(context.Context) ([]ModelPricing, error) {
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		openRouterModelsFetcher = originalFetch
+	})
+}
+
+func nearlyEqual(a, b float64) bool {
+	const epsilon = 0.000001
+	if a > b {
+		return a-b < epsilon
+	}
+	return b-a < epsilon
 }

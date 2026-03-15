@@ -671,15 +671,10 @@ func seedModelPricingCatalog(ctx context.Context, db *gorm.DB) error {
 	}
 
 	for _, row := range rows {
-		lookup := ModelPricing{
-			Provider:      row.Provider,
-			Model:         row.Model,
-			EffectiveFrom: row.EffectiveFrom,
-		}
-
 		var existing ModelPricing
 		err := db.WithContext(ctx).
-			Where("provider = ? AND model = ? AND effective_from = ?", lookup.Provider, lookup.Model, lookup.EffectiveFrom).
+			Where("provider = ? AND model = ?", row.Provider, row.Model).
+			Order("effective_from desc").
 			First(&existing).Error
 		if err == nil {
 			continue
@@ -738,7 +733,7 @@ func loadSeededModelPricing() ([]ModelPricing, error) {
 
 func bootstrapOpenRouterModelPricing(ctx context.Context, db *gorm.DB) error {
 	var count int64
-	if err := db.WithContext(ctx).Model(&ModelPricing{}).Where("provider = ?", "openrouter").Count(&count).Error; err != nil {
+	if err := db.WithContext(ctx).Model(&ModelPricing{}).Where("provider = ? AND source = ?", "openrouter", openRouterModelsAPIURL).Count(&count).Error; err != nil {
 		return err
 	}
 	if count > 0 {
@@ -754,18 +749,14 @@ func bootstrapOpenRouterModelPricing(ctx context.Context, db *gorm.DB) error {
 	}
 
 	for _, row := range rows {
-		lookup := ModelPricing{
-			Provider:      row.Provider,
-			Model:         row.Model,
-			EffectiveFrom: row.EffectiveFrom,
-		}
-
 		var existing ModelPricing
 		err := db.WithContext(ctx).
-			Where("provider = ? AND model = ? AND effective_from = ?", lookup.Provider, lookup.Model, lookup.EffectiveFrom).
+			Where("provider = ? AND model = ?", row.Provider, row.Model).
+			Order("effective_from desc").
 			First(&existing).Error
 		if err == nil {
 			if err := db.WithContext(ctx).Model(&existing).Updates(map[string]any{
+				"effective_from":        row.EffectiveFrom,
 				"input_cost_per_1m":     row.InputCostPer1M,
 				"output_cost_per_1m":    row.OutputCostPer1M,
 				"reasoning_cost_per_1m": row.ReasoningCostPer1M,
