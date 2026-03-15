@@ -93,6 +93,10 @@ make test
   - Local reference pricing catalog seeded at API startup/migration time.
   - Stores provider/model pricing metadata (`effective_from`, input/output per-1M rates, optional reasoning rate, source, and verification fields).
   - Intended as the runtime source of truth for later cost estimation work; it does not depend on live provider pricing fetches.
+  - Bootstrap behavior:
+    - static seed rows are always loaded idempotently
+    - if no local `openrouter` pricing rows exist yet, the API attempts a one-time import from `https://openrouter.ai/api/v1/models`
+    - if that import fails, startup continues and the static seed remains available
 
 ### Swagger UI
 

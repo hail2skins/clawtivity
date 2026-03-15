@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -199,6 +200,11 @@ type seededModelPricing struct {
 //go:embed model_pricing_seed.json
 var modelPricingSeedJSON []byte
 
+const openRouterModelsAPIURL = "https://openrouter.ai/api/v1/models"
+
+var openRouterHTTPClient = &http.Client{Timeout: 15 * time.Second}
+var openRouterModelsFetcher = fetchOpenRouterModelPricing
+
 func New() (Service, error) {
 	return newSQLiteService(os.Getenv("BLUEPRINT_DB_URL"))
 }
@@ -228,6 +234,9 @@ func newSQLiteService(dsn string) (*service, error) {
 
 	if err := seedModelPricingCatalog(context.Background(), gormDB); err != nil {
 		return nil, err
+	}
+	if err := bootstrapOpenRouterModelPricing(context.Background(), gormDB); err != nil {
+		log.Printf("openrouter pricing bootstrap skipped: %v", err)
 	}
 
 	if err := synchronizeActivityProjectIDs(context.Background(), gormDB, legacyProjectTags); err != nil {
@@ -725,4 +734,148 @@ func loadSeededModelPricing() ([]ModelPricing, error) {
 	}
 
 	return rows, nil
+}
+
+func bootstrapOpenRouterModelPricing(ctx context.Context, db *gorm.DB) error {
+	var count int64
+	if err := db.WithContext(ctx).Model(&ModelPricing{}).Where("provider = ?", "openrouter").Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	rows, err := openRouterModelsFetcher(ctx)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	for _, row := range rows {
+		lookup := ModelPricing{
+			Provider:      row.Provider,
+			Model:         row.Model,
+			EffectiveFrom: row.EffectiveFrom,
+		}
+
+		var existing ModelPricing
+		err := db.WithContext(ctx).
+			Where("provider = ? AND model = ? AND effective_from = ?", lookup.Provider, lookup.Model, lookup.EffectiveFrom).
+			First(&existing).Error
+		if err == nil {
+			if err := db.WithContext(ctx).Model(&existing).Updates(map[string]any{
+				"input_cost_per_1m":     row.InputCostPer1M,
+				"output_cost_per_1m":    row.OutputCostPer1M,
+				"reasoning_cost_per_1m": row.ReasoningCostPer1M,
+				"currency":              row.Currency,
+				"source":                row.Source,
+				"is_estimated":          row.IsEstimated,
+				"last_verified_at":      row.LastVerifiedAt,
+				"verification_notes":    row.VerificationNotes,
+			}).Error; err != nil {
+				return err
+			}
+			continue
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		if err := db.WithContext(ctx).Create(&row).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func fetchOpenRouterModelPricing(ctx context.Context) ([]ModelPricing, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openRouterModelsAPIURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := openRouterHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("openrouter models request failed: %s", resp.Status)
+	}
+
+	var payload struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Pricing struct {
+				Prompt            string `json:"prompt"`
+				Completion        string `json:"completion"`
+				InternalReasoning string `json:"internal_reasoning"`
+			} `json:"pricing"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	rows := make([]ModelPricing, 0, len(payload.Data))
+	for _, item := range payload.Data {
+		modelID := strings.TrimSpace(item.ID)
+		if modelID == "" {
+			continue
+		}
+
+		inputCost, err := parsePerTokenPriceToPerMillion(item.Pricing.Prompt)
+		if err != nil {
+			return nil, fmt.Errorf("parse openrouter prompt price for %s: %w", modelID, err)
+		}
+		outputCost, err := parsePerTokenPriceToPerMillion(item.Pricing.Completion)
+		if err != nil {
+			return nil, fmt.Errorf("parse openrouter completion price for %s: %w", modelID, err)
+		}
+
+		var reasoningCost *float64
+		if strings.TrimSpace(item.Pricing.InternalReasoning) != "" {
+			value, err := parsePerTokenPriceToPerMillion(item.Pricing.InternalReasoning)
+			if err != nil {
+				return nil, fmt.Errorf("parse openrouter reasoning price for %s: %w", modelID, err)
+			}
+			reasoningCost = &value
+		}
+
+		verifiedAt := now
+		rows = append(rows, ModelPricing{
+			Provider:           "openrouter",
+			Model:              modelID,
+			EffectiveFrom:      now,
+			InputCostPer1M:     inputCost,
+			OutputCostPer1M:    outputCost,
+			ReasoningCostPer1M: reasoningCost,
+			Currency:           "USD",
+			Source:             openRouterModelsAPIURL,
+			IsEstimated:        false,
+			LastVerifiedAt:     &verifiedAt,
+			VerificationNotes:  "Imported from OpenRouter models endpoint.",
+		})
+	}
+
+	return rows, nil
+}
+
+func parsePerTokenPriceToPerMillion(value string) (float64, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, nil
+	}
+
+	pricePerToken, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return pricePerToken * 1_000_000, nil
 }
