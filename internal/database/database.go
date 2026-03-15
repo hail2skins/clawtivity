@@ -765,14 +765,49 @@ func (s *service) lookupReferencePricing(ctx context.Context, model string) (Mod
 		Order("CASE WHEN provider = 'openrouter' THEN 0 ELSE 1 END").
 		Order("effective_from desc").
 		First(&pricing).Error
+	if err == nil {
+		return pricing, true, nil
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return ModelPricing{}, false, nil
+		aliasCandidates := providerQualifiedModelCandidates(normalizedModel)
+		if len(aliasCandidates) == 0 {
+			return ModelPricing{}, false, nil
+		}
+
+		err = s.db.WithContext(ctx).
+			Where("model IN ?", aliasCandidates).
+			Order("CASE WHEN provider = 'openrouter' THEN 0 ELSE 1 END").
+			Order("effective_from desc").
+			First(&pricing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ModelPricing{}, false, nil
+		}
+		if err != nil {
+			return ModelPricing{}, false, err
+		}
+
+		return pricing, true, nil
 	}
 	if err != nil {
 		return ModelPricing{}, false, err
 	}
 
 	return pricing, true, nil
+}
+
+func providerQualifiedModelCandidates(model string) []string {
+	if strings.Contains(model, "/") {
+		return nil
+	}
+
+	return []string{
+		"openai/" + model,
+		"anthropic/" + model,
+		"google/" + model,
+		"moonshotai/" + model,
+		"meta-llama/" + model,
+		"x-ai/" + model,
+	}
 }
 
 func bootstrapOpenRouterModelPricing(ctx context.Context, db *gorm.DB) error {

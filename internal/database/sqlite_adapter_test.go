@@ -376,6 +376,60 @@ func TestCreateActivityLeavesCostEstimateZeroWhenPricingUnknown(t *testing.T) {
 	}
 }
 
+func TestCreateActivityComputesReferenceCostEstimateFromProviderQualifiedPricing(t *testing.T) {
+	disableOpenRouterBootstrap(t)
+	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
+
+	adapter, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected adapter to initialize: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = adapter.Close()
+	})
+
+	svc := adapter.(*service)
+	lastVerifiedAt := time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC)
+	pricing := ModelPricing{
+		Provider:          "openrouter",
+		Model:             "openai/gpt-5.4",
+		EffectiveFrom:     time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC),
+		InputCostPer1M:    2.5,
+		OutputCostPer1M:   15.0,
+		Currency:          "USD",
+		Source:            openRouterModelsAPIURL,
+		LastVerifiedAt:    &lastVerifiedAt,
+		VerificationNotes: "provider-qualified alias test",
+	}
+	if err := svc.db.Create(&pricing).Error; err != nil {
+		t.Fatalf("expected provider-qualified pricing row to insert: %v", err)
+	}
+
+	activity := ActivityFeed{
+		SessionKey: "session-cost-3",
+		Model:      "gpt-5.4",
+		TokensIn:   446319,
+		TokensOut:  904,
+		DurationMS: 1000,
+		ProjectID:  mustProjectID(t, svc, "clawtivity"),
+		ProjectTag: "clawtivity",
+		Category:   "general",
+		Thinking:   "medium",
+		Reasoning:  false,
+		Channel:    "webchat",
+		Status:     "success",
+		UserID:     "u1",
+	}
+
+	if err := adapter.CreateActivity(t.Context(), &activity); err != nil {
+		t.Fatalf("expected create activity to succeed: %v", err)
+	}
+
+	if !nearlyEqual(activity.CostEstimate, 1.1293575) {
+		t.Fatalf("expected computed cost_estimate 1.1293575, got %.10f", activity.CostEstimate)
+	}
+}
+
 func TestNewSQLiteAdapterSeedsReferenceModelPricingCatalog(t *testing.T) {
 	disableOpenRouterBootstrap(t)
 	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
