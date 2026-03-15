@@ -92,12 +92,26 @@ make test
 
 - `model_pricing`
   - Local reference pricing catalog seeded at API startup/migration time.
-  - Stores provider/model pricing metadata (`effective_from`, input/output per-1M rates, optional reasoning rate, source, and verification fields).
+  - Stores provider/model pricing metadata (`effective_from`, input/output per-1M rates, optional reasoning rate, source, verification fields, and `is_stale` visibility).
   - Intended as the runtime source of truth for reference cost estimation work; it does not depend on live provider pricing fetches during activity ingest.
   - Bootstrap behavior:
     - static seed rows are always loaded idempotently
     - if no local `openrouter` pricing rows exist yet, the API attempts a one-time import from `https://openrouter.ai/api/v1/models`
     - if that import fails, startup continues and the static seed remains available
+  - Refresh behavior:
+    - the API process runs a weekly OpenRouter pricing refresh job by default
+    - if imported OpenRouter pricing rows are older than the refresh interval, the next startup also refreshes them immediately
+    - imported OpenRouter rows are marked `is_stale=true` when their verification age exceeds the stale threshold
+  - Pricing refresh env vars:
+    - `CLAWTIVITY_PRICING_REFRESH_ENABLED`
+      - default: enabled
+      - set to `false`/`0`/`off` to disable the background refresh worker
+    - `CLAWTIVITY_PRICING_REFRESH_INTERVAL`
+      - default: `168h` (7 days)
+      - controls both the background ticker cadence and the startup due-check interval
+    - `CLAWTIVITY_PRICING_STALE_AFTER`
+      - default: same as `CLAWTIVITY_PRICING_REFRESH_INTERVAL`
+      - controls when imported OpenRouter pricing rows are marked stale
 
 ### Swagger UI
 

@@ -67,6 +67,9 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 	if !svc.db.Migrator().HasIndex(&ModelPricing{}, "idx_model_pricing_source") {
 		t.Fatal("expected model_pricing source index to exist")
 	}
+	if !svc.db.Migrator().HasIndex(&ModelPricing{}, "idx_model_pricing_stale") {
+		t.Fatal("expected model_pricing stale index to exist")
+	}
 
 	assertColumnsPresent(t, svc, &ActivityFeed{}, []string{
 		"id",
@@ -121,6 +124,7 @@ func TestNewSQLiteAdapterCreatesRequiredSchema(t *testing.T) {
 		"currency",
 		"source",
 		"is_estimated",
+		"is_stale",
 		"last_verified_at",
 		"verification_notes",
 		"created_at",
@@ -656,6 +660,207 @@ func TestBootstrapOpenRouterModelPricingSkipsWhenImportedRowsAlreadyExist(t *tes
 	}
 	if called {
 		t.Fatal("expected bootstrap import to skip fetch when imported openrouter rows already exist")
+	}
+}
+
+func TestRefreshOpenRouterModelPricingIfDueRefreshesStaleCatalog(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
+
+	disableOpenRouterBootstrap(t)
+	adapter, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected adapter to initialize: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = adapter.Close()
+	})
+
+	svc := adapter.(*service)
+	oldVerified := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	existing := ModelPricing{
+		Provider:          "openrouter",
+		Model:             "moonshotai/kimi-k2.5",
+		EffectiveFrom:     oldVerified,
+		InputCostPer1M:    0.45,
+		OutputCostPer1M:   2.2,
+		Currency:          "USD",
+		Source:            openRouterModelsAPIURL,
+		IsEstimated:       false,
+		LastVerifiedAt:    &oldVerified,
+		VerificationNotes: "stale import",
+	}
+	if err := svc.db.Create(&existing).Error; err != nil {
+		t.Fatalf("expected stale imported row create to succeed: %v", err)
+	}
+
+	originalFetch := openRouterModelsFetcher
+	openRouterModelsFetcher = func(context.Context) ([]ModelPricing, error) {
+		now := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+		return []ModelPricing{
+			{
+				Provider:          "openrouter",
+				Model:             "moonshotai/kimi-k2.5",
+				EffectiveFrom:     now,
+				InputCostPer1M:    0.5,
+				OutputCostPer1M:   2.4,
+				Currency:          "USD",
+				Source:            openRouterModelsAPIURL,
+				IsEstimated:       false,
+				LastVerifiedAt:    &now,
+				VerificationNotes: "weekly refresh",
+			},
+			{
+				Provider:          "openrouter",
+				Model:             "openai/gpt-5.4",
+				EffectiveFrom:     now,
+				InputCostPer1M:    2.5,
+				OutputCostPer1M:   15.0,
+				Currency:          "USD",
+				Source:            openRouterModelsAPIURL,
+				IsEstimated:       false,
+				LastVerifiedAt:    &now,
+				VerificationNotes: "weekly refresh",
+			},
+		}, nil
+	}
+	t.Cleanup(func() {
+		openRouterModelsFetcher = originalFetch
+	})
+
+	config := pricingRefreshConfig{
+		Enabled:    true,
+		Interval:   7 * 24 * time.Hour,
+		StaleAfter: 7 * 24 * time.Hour,
+	}
+	now := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	if err := refreshOpenRouterModelPricingIfDue(context.Background(), svc.db, now, config); err != nil {
+		t.Fatalf("expected weekly refresh to succeed: %v", err)
+	}
+
+	var refreshed ModelPricing
+	if err := svc.db.Where("provider = ? AND model = ?", "openrouter", "moonshotai/kimi-k2.5").First(&refreshed).Error; err != nil {
+		t.Fatalf("expected refreshed kimi row to exist: %v", err)
+	}
+	if refreshed.InputCostPer1M != 0.5 || refreshed.OutputCostPer1M != 2.4 {
+		t.Fatalf("expected refreshed kimi pricing, got %f/%f", refreshed.InputCostPer1M, refreshed.OutputCostPer1M)
+	}
+	if refreshed.IsStale {
+		t.Fatal("expected refreshed kimi row to be marked fresh")
+	}
+
+	var added ModelPricing
+	if err := svc.db.Where("provider = ? AND model = ?", "openrouter", "openai/gpt-5.4").First(&added).Error; err != nil {
+		t.Fatalf("expected new model to be imported during refresh: %v", err)
+	}
+}
+
+func TestRefreshOpenRouterModelPricingIfDueSkipsFreshCatalog(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
+
+	disableOpenRouterBootstrap(t)
+	adapter, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected adapter to initialize: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = adapter.Close()
+	})
+
+	svc := adapter.(*service)
+	now := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	fresh := ModelPricing{
+		Provider:          "openrouter",
+		Model:             "moonshotai/kimi-k2.5",
+		EffectiveFrom:     now,
+		InputCostPer1M:    0.45,
+		OutputCostPer1M:   2.2,
+		Currency:          "USD",
+		Source:            openRouterModelsAPIURL,
+		IsEstimated:       false,
+		LastVerifiedAt:    &now,
+		VerificationNotes: "fresh import",
+	}
+	if err := svc.db.Create(&fresh).Error; err != nil {
+		t.Fatalf("expected fresh imported row create to succeed: %v", err)
+	}
+
+	called := false
+	originalFetch := openRouterModelsFetcher
+	openRouterModelsFetcher = func(context.Context) ([]ModelPricing, error) {
+		called = true
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		openRouterModelsFetcher = originalFetch
+	})
+
+	config := pricingRefreshConfig{
+		Enabled:    true,
+		Interval:   7 * 24 * time.Hour,
+		StaleAfter: 7 * 24 * time.Hour,
+	}
+	if err := refreshOpenRouterModelPricingIfDue(context.Background(), svc.db, now, config); err != nil {
+		t.Fatalf("expected fresh catalog check to succeed: %v", err)
+	}
+	if called {
+		t.Fatal("expected refresh fetch to be skipped for fresh catalog")
+	}
+}
+
+func TestRefreshOpenRouterModelPricingIfDueMarksRowsStaleOnFailure(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "clawtivity.db")
+
+	disableOpenRouterBootstrap(t)
+	adapter, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		t.Fatalf("expected adapter to initialize: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = adapter.Close()
+	})
+
+	svc := adapter.(*service)
+	oldVerified := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	staleCandidate := ModelPricing{
+		Provider:          "openrouter",
+		Model:             "moonshotai/kimi-k2.5",
+		EffectiveFrom:     oldVerified,
+		InputCostPer1M:    0.45,
+		OutputCostPer1M:   2.2,
+		Currency:          "USD",
+		Source:            openRouterModelsAPIURL,
+		IsEstimated:       false,
+		LastVerifiedAt:    &oldVerified,
+		VerificationNotes: "stale import",
+	}
+	if err := svc.db.Create(&staleCandidate).Error; err != nil {
+		t.Fatalf("expected stale imported row create to succeed: %v", err)
+	}
+
+	originalFetch := openRouterModelsFetcher
+	openRouterModelsFetcher = func(context.Context) ([]ModelPricing, error) {
+		return nil, context.DeadlineExceeded
+	}
+	t.Cleanup(func() {
+		openRouterModelsFetcher = originalFetch
+	})
+
+	config := pricingRefreshConfig{
+		Enabled:    true,
+		Interval:   7 * 24 * time.Hour,
+		StaleAfter: 7 * 24 * time.Hour,
+	}
+	now := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	if err := refreshOpenRouterModelPricingIfDue(context.Background(), svc.db, now, config); err == nil {
+		t.Fatal("expected refresh failure to be returned")
+	}
+
+	var refreshed ModelPricing
+	if err := svc.db.Where("provider = ? AND model = ?", "openrouter", "moonshotai/kimi-k2.5").First(&refreshed).Error; err != nil {
+		t.Fatalf("expected stale row lookup to succeed: %v", err)
+	}
+	if !refreshed.IsStale {
+		t.Fatal("expected refresh failure to mark stale imported row as stale")
 	}
 }
 

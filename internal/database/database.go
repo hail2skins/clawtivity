@@ -115,6 +115,7 @@ type ModelPricing struct {
 	Currency            string     `json:"currency"`
 	Source              string     `gorm:"index:idx_model_pricing_source" json:"source"`
 	IsEstimated         bool       `json:"is_estimated"`
+	IsStale             bool       `gorm:"index:idx_model_pricing_stale" json:"is_stale"`
 	LastVerifiedAt      *time.Time `gorm:"column:last_verified_at" json:"last_verified_at,omitempty"`
 	VerificationNotes   string     `gorm:"column:verification_notes" json:"verification_notes"`
 	CreatedAt           time.Time  `gorm:"autoCreateTime" json:"created_at"`
@@ -179,9 +180,10 @@ type ProjectSummary struct {
 }
 
 type service struct {
-	db    *gorm.DB
-	sqlDB *sql.DB
-	dsn   string
+	db                   *gorm.DB
+	sqlDB                *sql.DB
+	dsn                  string
+	pricingRefreshCancel context.CancelFunc
 }
 
 type seededModelPricing struct {
@@ -205,6 +207,12 @@ const openRouterModelsAPIURL = "https://openrouter.ai/api/v1/models"
 
 var openRouterHTTPClient = &http.Client{Timeout: 15 * time.Second}
 var openRouterModelsFetcher = fetchOpenRouterModelPricing
+
+type pricingRefreshConfig struct {
+	Enabled    bool
+	Interval   time.Duration
+	StaleAfter time.Duration
+}
 
 func New() (Service, error) {
 	return newSQLiteService(os.Getenv("BLUEPRINT_DB_URL"))
@@ -239,6 +247,10 @@ func newSQLiteService(dsn string) (*service, error) {
 	if err := bootstrapOpenRouterModelPricing(context.Background(), gormDB); err != nil {
 		log.Printf("openrouter pricing bootstrap skipped: %v", err)
 	}
+	refreshConfig := resolvePricingRefreshConfig()
+	if err := refreshOpenRouterModelPricingIfDue(context.Background(), gormDB, time.Now().UTC(), refreshConfig); err != nil {
+		log.Printf("openrouter pricing refresh skipped: %v", err)
+	}
 
 	if err := synchronizeActivityProjectIDs(context.Background(), gormDB, legacyProjectTags); err != nil {
 		return nil, err
@@ -249,7 +261,10 @@ func newSQLiteService(dsn string) (*service, error) {
 		return nil, err
 	}
 
-	return &service{db: gormDB, sqlDB: sqlDB, dsn: dsn}, nil
+	svc := &service{db: gormDB, sqlDB: sqlDB, dsn: dsn}
+	svc.startPricingRefreshWorker(refreshConfig)
+
+	return svc, nil
 }
 
 // Health checks the health of the database connection by pinging the database.
@@ -475,8 +490,68 @@ func (s *service) ResolveReferenceCost(ctx context.Context, model string, tokens
 
 // Close closes the database connection.
 func (s *service) Close() error {
+	if s.pricingRefreshCancel != nil {
+		s.pricingRefreshCancel()
+	}
 	log.Printf("Disconnected from database: %s", s.dsn)
 	return s.sqlDB.Close()
+}
+
+func (s *service) startPricingRefreshWorker(config pricingRefreshConfig) {
+	if !config.Enabled || config.Interval <= 0 {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.pricingRefreshCancel = cancel
+
+	ticker := time.NewTicker(config.Interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := refreshOpenRouterModelPricingIfDue(ctx, s.db, time.Now().UTC(), config); err != nil {
+					log.Printf("openrouter pricing refresh failed: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+func resolvePricingRefreshConfig() pricingRefreshConfig {
+	interval := resolveDurationEnv("CLAWTIVITY_PRICING_REFRESH_INTERVAL", 7*24*time.Hour)
+	staleAfter := resolveDurationEnv("CLAWTIVITY_PRICING_STALE_AFTER", interval)
+	if staleAfter < interval {
+		staleAfter = interval
+	}
+
+	enabled := true
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("CLAWTIVITY_PRICING_REFRESH_ENABLED"))) {
+	case "0", "false", "no", "off":
+		enabled = false
+	}
+
+	return pricingRefreshConfig{
+		Enabled:    enabled,
+		Interval:   interval,
+		StaleAfter: staleAfter,
+	}
+}
+
+func resolveDurationEnv(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+
+	duration, err := time.ParseDuration(raw)
+	if err != nil || duration <= 0 {
+		return fallback
+	}
+	return duration
 }
 
 func applyActivityFilters(tx *gorm.DB, filters ActivityFilters) (*gorm.DB, error) {
@@ -860,11 +935,85 @@ func bootstrapOpenRouterModelPricing(ctx context.Context, db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
+	return upsertOpenRouterModelPricing(ctx, db, rows)
+}
+
+func refreshOpenRouterModelPricingIfDue(ctx context.Context, db *gorm.DB, now time.Time, config pricingRefreshConfig) error {
+	if !config.Enabled {
+		return nil
+	}
+
+	if err := markOpenRouterPricingStale(ctx, db, now, config.StaleAfter); err != nil {
+		return err
+	}
+
+	due, err := openRouterPricingRefreshDue(ctx, db, now, config.Interval)
+	if err != nil || !due {
+		return err
+	}
+
+	rows, err := openRouterModelsFetcher(ctx)
+	if err != nil {
+		if staleErr := markOpenRouterPricingStale(ctx, db, now, config.StaleAfter); staleErr != nil {
+			return staleErr
+		}
+		return err
+	}
+
+	return upsertOpenRouterModelPricing(ctx, db, rows)
+}
+
+func openRouterPricingRefreshDue(ctx context.Context, db *gorm.DB, now time.Time, interval time.Duration) (bool, error) {
+	if interval <= 0 {
+		return false, nil
+	}
+
+	var latest ModelPricing
+	err := db.WithContext(ctx).
+		Model(&ModelPricing{}).
+		Where("provider = ? AND source = ?", "openrouter", openRouterModelsAPIURL).
+		Where("last_verified_at IS NOT NULL").
+		Order("last_verified_at desc").
+		First(&latest).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if latest.LastVerifiedAt == nil {
+		return true, nil
+	}
+
+	return now.Sub(latest.LastVerifiedAt.UTC()) >= interval, nil
+}
+
+func markOpenRouterPricingStale(ctx context.Context, db *gorm.DB, now time.Time, staleAfter time.Duration) error {
+	if staleAfter <= 0 {
+		staleAfter = 7 * 24 * time.Hour
+	}
+
+	cutoff := now.Add(-staleAfter)
+	base := db.WithContext(ctx).Model(&ModelPricing{}).Where("provider = ? AND source = ?", "openrouter", openRouterModelsAPIURL)
+
+	if err := base.Where("last_verified_at IS NULL OR last_verified_at < ?", cutoff).Update("is_stale", true).Error; err != nil {
+		return err
+	}
+	if err := base.Where("last_verified_at IS NOT NULL AND last_verified_at >= ?", cutoff).Update("is_stale", false).Error; err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func upsertOpenRouterModelPricing(ctx context.Context, db *gorm.DB, rows []ModelPricing) error {
 	if len(rows) == 0 {
 		return nil
 	}
 
 	for _, row := range rows {
+		row.IsStale = false
+
 		var existing ModelPricing
 		err := db.WithContext(ctx).
 			Where("provider = ? AND model = ?", row.Provider, row.Model).
@@ -879,6 +1028,7 @@ func bootstrapOpenRouterModelPricing(ctx context.Context, db *gorm.DB) error {
 				"currency":              row.Currency,
 				"source":                row.Source,
 				"is_estimated":          row.IsEstimated,
+				"is_stale":              false,
 				"last_verified_at":      row.LastVerifiedAt,
 				"verification_notes":    row.VerificationNotes,
 			}).Error; err != nil {
